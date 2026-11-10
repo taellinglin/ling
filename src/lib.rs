@@ -5,6 +5,7 @@
     html_favicon_url = "https://ling-lang.org/images/logo.svg"
 )]
 
+pub mod assets;
 pub mod astviz;
 pub mod borrowck;
 pub mod codegen;
@@ -24,7 +25,7 @@ pub mod semantic;
 pub mod utils;
 pub mod visualize;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "audio"))]
 pub use ling_audio;
 
 // Re-exports

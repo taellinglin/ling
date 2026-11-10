@@ -17,9 +17,10 @@
 //! every byte below goes through the e1000 ring to a real peer.
 
 use crate::arch::timer;
-// The NIC: the e1000 on x86, the RP1's GEM on the Raspberry Pi 5.
+// The NIC: the e1000 or the Intel I225/I226 (igc) on x86 (`drivers::netdev`
+// picks), the RP1's GEM on the Raspberry Pi 5.
 #[cfg(target_arch = "x86_64")]
-use crate::drivers::net_e1000 as nic;
+use crate::drivers::netdev as nic;
 #[cfg(target_arch = "aarch64")]
 use crate::arch::netdev as nic;
 
@@ -61,16 +62,35 @@ const WAIT_BUDGET_US: u64 = 8_000_000;
 static mut NET_OWNER: i64 = -1;
 static mut NET_DEPTH: u32 = 0;
 
-/// Acquire the net lock (re-entrant per task). Yields until free.
+/// Acquire the net lock (re-entrant per task). Yields until free. The task
+/// identity is coroutine-aware (`coro::task_key`) so a green thread's fetch
+/// and main's don't alias; the spin also gives green threads a turn, since
+/// the holder may be one that needs main's CPU to finish.
 pub fn net_acquire() {
-    let me = crate::proc::sched::getpid() as i64;
+    let me = crate::coro::task_key();
     unsafe {
         while NET_OWNER != -1 && NET_OWNER != me {
             crate::proc::sched::yield_now();
+            crate::coro::yield_now();
         }
         NET_OWNER = me;
         NET_DEPTH += 1;
     }
+}
+
+/// Does the running cooperative task hold the net lock? This is the gate for
+/// `poll_until`'s coroutine yield: a green thread hands main the CPU only
+/// inside its own network transaction, never mid disk I/O (interleaved ATA /
+/// lingfs commits between a coroutine and main would corrupt the FS).
+pub fn net_owned_by_me() -> bool {
+    unsafe { NET_OWNER != -1 && NET_OWNER == crate::coro::task_key() }
+}
+/// Is any cooperative task holding the net lock right now? The Wi-Fi tick on
+/// main uses this to stay off the SDIO bus while a green-thread fetch is driving
+/// the radio (that fetch yields to main between segments, but main must not
+/// issue its own radio commands meanwhile or it corrupts the fetch's transfer).
+pub fn net_held() -> bool {
+    unsafe { NET_OWNER != -1 }
 }
 /// Release one level of the net lock.
 pub fn net_release() {
@@ -144,7 +164,32 @@ pub fn arp_gateway() -> Option<[u8; 6]> {
             return None;
         }
     }
-    match nic::arp_selftest() {
+    // On the Pi over Wi-Fi, the wired-only `nic::arp_selftest` (RP1 Ethernet
+    // GEM) can't reach the gateway, so every off-subnet fetch (DNS, HTTPS --
+    // Horizon, lingfu, wallet, outbound SSH) failed after a successful join.
+    // There, resolve the gateway over the ACTIVE device via `arp_resolve`
+    // (which sends/receives through `nic::{mac,transmit,receive}` = Wi-Fi when
+    // joined). x86 and a wired Pi keep `nic::arp_selftest`, which uses an 8s
+    // budget tuned for QEMU's fast-TSC RX delivery -- don't regress them.
+    let result = {
+        #[cfg(target_arch = "aarch64")]
+        {
+            if crate::wifi::joined() {
+                let gw = gateway_ip();
+                if gw == [0, 0, 0, 0] {
+                    return None; // no gateway yet (pre-DHCP / link-local)
+                }
+                arp_resolve(gw)
+            } else {
+                nic::arp_selftest()
+            }
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            nic::arp_selftest()
+        }
+    };
+    match result {
         Some(mac) => unsafe {
             GW_MAC = mac;
             GW_MAC_KNOWN = true;
@@ -165,7 +210,36 @@ pub fn invalidate_gateway() {
     unsafe {
         GW_MAC_KNOWN = false;
         GW_FAIL_AT_MS = 0;
+        (*(&raw mut DNS_CACHE)).clear();
     }
+}
+
+// Resolved names, so a page's many sub-resources on one host pay one lookup
+// (each uncached lookup is a UDP round trip, and a slow resolver cost a second
+// or more per request). Entries expire after DNS_TTL_MS; a new IP / DNS
+// configuration clears them. Only touched under the net lock's cooperative
+// scheduling, like the rest of this file's statics.
+static mut DNS_CACHE: alloc::vec::Vec<(alloc::string::String, [u8; 4], u64)> = alloc::vec::Vec::new();
+const DNS_TTL_MS: u64 = 300_000;
+const DNS_CACHE_MAX: usize = 32;
+
+fn dns_cache_get(host: &str) -> Option<[u8; 4]> {
+    let now = timer::now_ms();
+    let cache = unsafe { &*(&raw const DNS_CACHE) };
+    cache
+        .iter()
+        .find(|(h, _, at)| h.eq_ignore_ascii_case(host) && now.saturating_sub(*at) < DNS_TTL_MS)
+        .map(|&(_, ip, _)| ip)
+}
+
+fn dns_cache_put(host: &str, ip: [u8; 4]) {
+    let cache = unsafe { &mut *(&raw mut DNS_CACHE) };
+    let now = timer::now_ms();
+    cache.retain(|(h, _, at)| !h.eq_ignore_ascii_case(host) && now.saturating_sub(*at) < DNS_TTL_MS);
+    if cache.len() >= DNS_CACHE_MAX {
+        cache.remove(0);
+    }
+    cache.push((alloc::string::String::from(host), ip, now));
 }
 
 /// Is `ip` on our own IPv4 subnet (per the current mask)?
@@ -1708,7 +1782,9 @@ pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
     if let Some(ip) = parse_ipv4(host) {
         return Some(ip);
     }
-    // Re-entrant: no-op cost when https_get/http_get already hold the lock,
+    if let Some(ip) = dns_cache_get(host) {
+        return Some(ip);
+    }
     // real acquisition when called standalone (terminal `dns`) concurrently
     // with the background icon fetcher.
     let _net = NetGuard::new();
@@ -1747,6 +1823,41 @@ pub fn dns_query_at(server: [u8; 4], host: &str) -> Option<[u8; 4]> {
     dns_query(server, host)
 }
 
+/// The time from an SNTP server (RFC 4330), as unix seconds: a few public
+/// servers in turn, the first answer wins. National time institutes and pools
+/// outside the US: Thailand's NIMT, Alibaba Cloud (China), Switzerland's
+/// METAS, then the Thai and Asian pools.
+pub fn sntp_time() -> Option<u64> {
+    const NTP_TO_UNIX: u64 = 2_208_988_800;
+    for host in ["time1.nimt.or.th", "ntp.aliyun.com", "ntp.metas.ch", "th.pool.ntp.org", "asia.pool.ntp.org"] {
+        let Some(server) = dns_resolve(host) else { continue };
+        let _net = NetGuard::new();
+        let mut q = [0u8; 48];
+        q[0] = 0x1B; // LI 0, version 3, mode 3 (client)
+        let src_port = 41000 + (timer::now_ms() % 8000) as u16;
+        if !udp_send(server, 123, src_port, &q) {
+            continue;
+        }
+        let mut resp = [0u8; 64];
+        let mut got: Option<u64> = None;
+        timer::poll_until(DNS_BUDGET_US, || {
+            let Some(n) = udp_poll(src_port, &mut resp) else { return false };
+            if n < 48 || resp[0] & 0x07 != 4 {
+                return false; // not a server reply
+            }
+            let secs = u32::from_be_bytes([resp[40], resp[41], resp[42], resp[43]]) as u64;
+            if secs > NTP_TO_UNIX {
+                got = Some(secs - NTP_TO_UNIX);
+            }
+            true
+        });
+        if got.is_some() {
+            return got;
+        }
+    }
+    None
+}
+
 // -- DHCP client -------------------------------------------------------------
 
 /// What we parse out of a DHCP OFFER/ACK. Any field left zero means the
@@ -1759,6 +1870,8 @@ struct DhcpReply {
     dns: [u8; 4],
     server_id: [u8; 4],
     msg_type: u8,
+    /// Option 51: the lease length in seconds (0 = not sent).
+    lease: u32,
 }
 impl DhcpReply {
     const EMPTY: Self = Self {
@@ -1768,7 +1881,69 @@ impl DhcpReply {
         dns: [0; 4],
         server_id: [0; 4],
         msg_type: 0,
+        lease: 0,
     };
+}
+
+// The lease we hold (DHCP only; a static address never expires): when it was acquired, how long it
+// lasts, and when the next renewal attempt is due. Without renewing, the router may hand the address
+// to another device once the lease runs out and every connection of this machine drops.
+static mut LEASE_AT_MS: u64 = 0;
+static mut LEASE_SECS: u32 = 0;
+static mut LEASE_IP: [u8; 4] = [0; 4];
+static mut LEASE_NEXT_MS: u64 = 0;
+
+fn lease_note(ip: [u8; 4], secs: u32) {
+    unsafe {
+        LEASE_AT_MS = timer::now_ms();
+        LEASE_SECS = secs;
+        LEASE_IP = ip;
+        LEASE_NEXT_MS = 0;
+    }
+}
+
+/// From `startup::tick` (about once a second while a program presents frames): renew the DHCP lease.
+/// At half the lease time ask the server to confirm our address (a short, bounded exchange, retried
+/// every 30 s); if it refuses, or the lease is nearly over with no answer, start over with a full
+/// DHCP exchange. Costs one comparison per call until then.
+pub fn lease_tick(now: u64) {
+    let (at, secs, ip, next) = unsafe { (LEASE_AT_MS, LEASE_SECS, LEASE_IP, LEASE_NEXT_MS) };
+    if secs == 0 || ip == [0; 4] || now < next {
+        return;
+    }
+    let age = now.saturating_sub(at);
+    let life = secs as u64 * 1000;
+    if age < life / 2 {
+        return;
+    }
+    if unsafe { (*(&raw const STATIC_CFG)).is_some() } {
+        return; // a static address was set in Settings: nothing to renew
+    }
+    unsafe { LEASE_NEXT_MS = now + 30_000 };
+    let mac = nic::mac();
+    let xid = (now as u32) ^ ((mac[5] as u32) << 8) ^ 0x4C65_6173;
+    // INIT-REBOOT form: the address we hold in option 50, no server id; any server that knows the
+    // lease answers with an ACK (same address, a fresh lease) or a NAK (it is not ours any more)
+    let mut req = [0u8; 16];
+    req[0..3].copy_from_slice(&[53, 1, 3]);
+    req[3..5].copy_from_slice(&[50, 4]);
+    req[5..9].copy_from_slice(&ip);
+    req[9..14].copy_from_slice(&[55, 3, 1, 3, 6]);
+    req[14] = 255;
+    let mut got = DhcpReply::EMPTY;
+    let answered = dhcp_send(mac, xid, &req[..15]) && dhcp_await(xid, 0, &mut got, 120_000) && (got.msg_type == 5 || got.msg_type == 6);
+    if answered && got.msg_type == 5 && got.yiaddr == ip {
+        lease_note(ip, if got.lease > 0 { got.lease } else { secs });
+        crate::console_write(b"net: DHCP lease renewed\n");
+        return;
+    }
+    let nak = answered && got.msg_type == 6;
+    if nak || age + 60_000 >= life {
+        crate::console_write(if nak { b"net: DHCP server refused the lease; asking again\n" } else { b"net: DHCP lease about to end; asking again\n" });
+        if !dhcp_configure() {
+            unsafe { LEASE_NEXT_MS = now + 30_000 };
+        }
+    }
 }
 
 /// Build and broadcast one BOOTREQUEST (op=1) with the given options. Uses
@@ -1864,6 +2039,7 @@ fn dhcp_await(xid: u32, want_type: u8, out: &mut DhcpReply, budget_us: u64) -> b
                 3 if l >= 4 => r.router.copy_from_slice(&v[..4]),
                 6 if l >= 4 => r.dns.copy_from_slice(&v[..4]),
                 54 if l >= 4 => r.server_id.copy_from_slice(&v[..4]),
+                51 if l >= 4 => r.lease = u32::from_be_bytes([v[0], v[1], v[2], v[3]]),
                 _ => {},
             }
             p += 2 + l;
@@ -1901,17 +2077,65 @@ pub fn apply_static_ip_from_mac() {
 }
 
 /// A user-set static IPv4 configuration (address, mask, gateway, DNS) --
-/// Settings > Network on the desktop. While one is set, `configure` applies
-/// it instead of asking DHCP.
+/// Settings > Network on the desktop. While one is set, every way of getting
+/// an address (`configure`, `dhcp_configure`: boot, Wi-Fi joins, the apps)
+/// applies it instead of asking DHCP. Kept in lingfs `netstatic` so it holds
+/// from boot on, before anyone has signed in.
 static mut STATIC_CFG: Option<([u8; 4], [u8; 4], [u8; 4], [u8; 4])> = None;
+static mut STATIC_LOADED: bool = false;
+const STATIC_FILE: &str = "netstatic";
 
 pub fn set_static(cfg: Option<([u8; 4], [u8; 4], [u8; 4], [u8; 4])>) {
-    unsafe { *(&raw mut STATIC_CFG) = cfg };
+    unsafe {
+        *(&raw mut STATIC_CFG) = cfg;
+        STATIC_LOADED = true;
+    }
+    if crate::fs::lingfs::is_mounted() {
+        let text = match cfg {
+            Some((ip, mask, gw, dns)) => {
+                let f = |a: [u8; 4]| alloc::format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);
+                alloc::format!("static {} {} {} {}\n", f(ip), f(mask), f(gw), f(dns))
+            },
+            None => alloc::string::String::from("dhcp\n"),
+        };
+        let _ = crate::fs::lingfs::write_file_any(STATIC_FILE, text.as_bytes());
+    }
     apply_static();
 }
 
 pub fn static_config() -> Option<([u8; 4], [u8; 4], [u8; 4], [u8; 4])> {
-    unsafe { *(&raw const STATIC_CFG) }
+    // the saved setting, read the first time storage is there
+    unsafe {
+        if !STATIC_LOADED && crate::fs::lingfs::is_mounted() {
+            STATIC_LOADED = true;
+            let mut buf = [0u8; 4096];
+            if let Ok(Some(n)) = crate::fs::lingfs::read_file(STATIC_FILE, &mut buf) {
+                let text = core::str::from_utf8(&buf[..n]).unwrap_or("");
+                let mut it = text.split_whitespace();
+                if it.next() == Some("static") {
+                    let ips: alloc::vec::Vec<[u8; 4]> = it.filter_map(parse_ip4).collect();
+                    if ips.len() >= 3 {
+                        let dns = ips.get(3).copied().unwrap_or(ips[2]);
+                        *(&raw mut STATIC_CFG) = Some((ips[0], ips[1], ips[2], dns));
+                    }
+                }
+            }
+        }
+        *(&raw const STATIC_CFG)
+    }
+}
+
+fn parse_ip4(s: &str) -> Option<[u8; 4]> {
+    let mut out = [0u8; 4];
+    let mut n = 0;
+    for part in s.split('.') {
+        if n == 4 {
+            return None;
+        }
+        out[n] = part.parse().ok()?;
+        n += 1;
+    }
+    if n == 4 { Some(out) } else { None }
 }
 
 /// Put the static configuration on the NIC, if there is one.
@@ -1929,6 +2153,7 @@ pub fn apply_static() -> bool {
 /// Get an address: the static one when set, DHCP otherwise.
 pub fn configure() -> bool {
     if apply_static() {
+        crate::clock::sync_from_network();
         return true;
     }
     dhcp_configure()
@@ -1938,6 +2163,11 @@ pub fn configure() -> bool {
 /// false after the timeouts and the static SLIRP fallback stays in place, so
 /// plain QEMU and manual static-IP setups still work. Runs once at boot.
 pub fn dhcp_configure() -> bool {
+    // a static address set in Settings > Network wins over DHCP everywhere
+    if apply_static() {
+        crate::clock::sync_from_network();
+        return true;
+    }
     if !nic::ensure_init() {
         return false;
     }
@@ -1996,11 +2226,15 @@ pub fn dhcp_configure() -> bool {
         };
         nic::set_ip_config(ip, mask, gw);
         invalidate_gateway();
+        // remember the lease so it can be renewed (an ACK that omits the time falls back to the OFFER's)
+        lease_note(ip, if ack.lease > 0 { ack.lease } else { offer.lease });
         // Prefer the lease's DNS as primary, keep Cloudflare as secondary.
         let dns = if ack.dns != [0; 4] { ack.dns } else { offer.dns };
         if dns != [0; 4] {
             set_dns(dns, SECONDARY_DNS);
         }
+        // the Pi 5's clock restarts at 1970 without a battery: ask the network
+        crate::clock::sync_from_network();
         return true;
     }
     false

@@ -1,0 +1,38 @@
+[package]
+name = "ling-paint"
+version = "2030.0.1"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>"]
+description = "LingAnime paint engine: tiled 16-bit layers, blend modes, dynamic brushes, vector paths, gradients, halftone / dither / screentone, 2.5D rigs with projections, a Stable Diffusion bridge and pen-tablet input"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+# `std` (default): the desktop engine - rayon, the `image` codecs, zip projects, the OS clipboard, WinTab pens and
+# the Stable Diffusion client. Without it the crate is `no_std` + `alloc` (the LingOS kernel): the host supplies
+# files, a clock and parallel loops through `os::set_host`, PNG and .lanime (zip) go through the small in-crate
+# codecs in `src/os/`, and Stable Diffusion / pen tablets / ffmpeg video report that they are not available.
+default = ["std"]
+std = ["dep:rayon", "dep:image", "dep:zip", "dep:libloading", "dep:arboard", "serde/std", "serde_json/std", "base64/std"]
+
+[dependencies]
+rayon = { workspace = true, optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"], optional = true }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+# no_std only: float maths through libm, DEFLATE for the in-crate PNG / zip codecs
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }
+libm = "0.2"
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+
+[target.'cfg(windows)'.dependencies]
+libloading = { version = "0.8", optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+arboard = { version = "3", optional = true }
+
+[lib]
+name = "ling_paint"
+path = "src/lib.rs"

@@ -868,7 +868,16 @@ impl Volume {
 /// multi-GB file costs no FAT walk. Valid while the file is not rewritten.
 pub struct RangeFile {
     pub size: u64,
+    /// Bytes past this read as zeros (exFAT's ValidDataLength; FAT: `size`).
+    valid: u64,
     runs: Vec<(u64, u32, u64)>,
+}
+
+impl RangeFile {
+    /// From runs `(file offset, first absolute LBA, bytes)` (`fs::exfat`).
+    pub fn from_runs(size: u64, valid: u64, runs: Vec<(u64, u32, u64)>) -> RangeFile {
+        RangeFile { size, valid: valid.min(size), runs }
+    }
 }
 
 impl Volume {
@@ -898,7 +907,7 @@ impl Volume {
         if off < size {
             return Err(()); // the chain is shorter than the file
         }
-        Ok(RangeFile { size, runs })
+        Ok(RangeFile { size, valid: size, runs })
     }
 }
 
@@ -909,6 +918,18 @@ impl RangeFile {
         let end = offset.checked_add(buf.len() as u64).ok_or(())?;
         if end > self.size {
             return Err(());
+        }
+        if buf.is_empty() {
+            return Ok(());
+        }
+        if end > self.valid {
+            // the part past ValidDataLength is zeros, not what the disk holds
+            let keep = self.valid.saturating_sub(offset) as usize;
+            buf[keep..].fill(0);
+            if keep == 0 {
+                return Ok(());
+            }
+            return self.read_at(d, offset, &mut buf[..keep]);
         }
         let mut pos = offset;
         let mut done = 0usize;

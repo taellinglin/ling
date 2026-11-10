@@ -39,10 +39,11 @@ pub fn format_region(base: u32) -> Result<(), ()> {
 /// all 0xFF), never over data of unknown origin. Ok(true) = freshly formatted.
 pub fn mount_region(base: u32) -> Result<bool, ()> {
     objects::set_base_lba(base);
-    if load_superblock().is_ok() {
+    if commit::select_slot() && load_superblock().is_ok() {
         mount()?;
         return Ok(false);
     }
+    objects::use_slot(base);
     let mut block = [0u8; BLOCK_SIZE];
     objects::read_block(base, &mut block)?;
     let blank = block.iter().all(|&b| b == 0) || block.iter().all(|&b| b == 0xFF);
@@ -54,7 +55,10 @@ pub fn mount_region(base: u32) -> Result<bool, ()> {
 }
 
 pub fn format() -> Result<(), ()> {
+    objects::use_slot(objects::home_lba());
+    commit::forget_other_slot();
     unsafe {
+        commit::COMMITS.generation = 0;
         objects::OBJECTS.object_count = 0;
         objects::OBJECTS.next_free_block = 0;
         objects::OBJECTS.index = [EMPTY_ENTRY; MAX_OBJECTS];
@@ -73,6 +77,7 @@ pub fn format() -> Result<(), ()> {
 }
 
 pub fn mount() -> Result<(), ()> {
+    commit::select_slot();
     match load_superblock() {
         Ok((object_count, next_free_block, commit_count, next_seq)) => {
             unsafe {
@@ -90,6 +95,140 @@ pub fn mount() -> Result<(), ()> {
     }
 }
 
+/// Rewrite the volume into its other slot keeping only what `new_root` uses,
+/// with `new_root` as the one commit. Ok(true) = done (the caller's commit is
+/// made); Ok(false) = not worth it / not possible now, nothing changed.
+/// `must` = the commit log is full, so compact even for little gain.
+pub fn compact(new_root: Hash, must: bool) -> Result<bool, ()> {
+    if unsafe { WRITERS_OPEN } > 0 {
+        return Ok(false); // a streamed file's objects aren't linked yet
+    }
+    let Some(live) = live_objects(new_root) else {
+        crate::console_write(b"lingfs: compaction skipped -- an object is missing
+");
+        return Ok(false);
+    };
+    let total = unsafe { objects::OBJECTS.object_count } as usize;
+    if live.len() + commit::COMPACT_FREE_OBJECTS / 2 > MAX_OBJECTS {
+        return Ok(false); // the live data itself fills the volume
+    }
+    if !must && total.saturating_sub(live.len()) < 256 {
+        return Ok(false);
+    }
+    // Everything live into RAM first (at most MAX_OBJECTS x 4 KiB).
+    let mut data: alloc::vec::Vec<(Hash, alloc::vec::Vec<u8>)> = alloc::vec::Vec::with_capacity(live.len());
+    for h in &live {
+        let mut block = [0u8; BLOCK_SIZE];
+        let Ok(Some(n)) = get_object(h, &mut block) else { return Ok(false) };
+        data.push((*h, block[..n].to_vec()));
+    }
+    let old = objects::base_lba();
+    let target = objects::other_slot_lba();
+    let gen = unsafe { commit::COMMITS.generation };
+    objects::use_slot(target);
+    objects::clear_table();
+    let written = (|| -> Result<(), ()> {
+        for (h, d) in &data {
+            if objects::put_object_nosync(d)? != *h {
+                return Err(());
+            }
+        }
+        save_index()?;
+        commit::restart_log(new_root);
+        save_commits()?;
+        unsafe { commit::COMMITS.generation = gen.wrapping_add(1) };
+        save_superblock() // last: until here the old slot is the current one
+    })();
+    if written.is_err() {
+        crate::console_write(b"lingfs: compaction failed -- staying on the old slot
+");
+        objects::use_slot(old);
+        let (oc, nfb, cc, ns) = load_superblock()?;
+        unsafe {
+            objects::OBJECTS.object_count = oc;
+            objects::OBJECTS.next_free_block = nfb;
+            commit::COMMITS.commit_count = cc;
+            commit::COMMITS.next_seq = ns;
+        }
+        objects::clear_table();
+        unsafe {
+            objects::OBJECTS.object_count = oc;
+            objects::OBJECTS.next_free_block = nfb;
+        }
+        load_index()?;
+        load_commits()?;
+        return Ok(false);
+    }
+    let mut msg = alloc::string::String::from("lingfs: compacted ");
+    msg.push_str(&alloc::format!("{} objects to {} ({} commits)
+", total, live.len(), MAX_COMMITS));
+    crate::console_write(msg.as_bytes());
+    Ok(true)
+}
+
+/// Every object reachable from `root`: trees, file blobs, and the LBIG/LBG2
+/// manifests and data blocks of big files. None if one is missing.
+fn live_objects(root: Hash) -> Option<alloc::vec::Vec<Hash>> {
+    #[derive(Clone, Copy)]
+    enum Node {
+        Tree,
+        File,
+        Leaf,
+        Data,
+    }
+    let mut seen = alloc::collections::BTreeSet::new();
+    let mut out = alloc::vec::Vec::new();
+    if root == ZERO_HASH {
+        return Some(out);
+    }
+    let mut stack = alloc::vec![(root, Node::Tree)];
+    while let Some((h, node)) = stack.pop() {
+        if h == ZERO_HASH || !seen.insert(h) {
+            continue;
+        }
+        out.push(h);
+        match node {
+            Node::Data => {
+                find(&h)?;
+            },
+            Node::Tree => {
+                let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
+                let n = get_tree(&h, &mut entries).ok()??;
+                for e in &entries[..n] {
+                    stack.push((e.1, if e.2 == Kind::Tree { Node::Tree } else { Node::File }));
+                }
+            },
+            Node::File | Node::Leaf => {
+                let mut block = [0u8; BLOCK_SIZE];
+                let len = get_object(&h, &mut block).ok()??;
+                let magic = block.get(..4);
+                // a file blob: LBIG lists data blocks, LBG2 lists LBIG leaves;
+                // a leaf (under LBG2) always lists data blocks
+                let child = match node {
+                    Node::Leaf => Some(Node::Data),
+                    _ if magic == Some(&BIG_MAGIC[..]) => Some(Node::Data),
+                    _ if magic == Some(&BIG2_MAGIC[..]) => Some(Node::Leaf),
+                    _ => None,
+                };
+                if let Some(kind) = child {
+                    if len >= BIG_HEADER {
+                        for i in 0..(len - BIG_HEADER) / 32 {
+                            let mut c = ZERO_HASH;
+                            c.copy_from_slice(&block[BIG_HEADER + i * 32..BIG_HEADER + (i + 1) * 32]);
+                            stack.push((c, kind));
+                        }
+                    }
+                }
+            },
+        }
+    }
+    Some(out)
+}
+
+/// Streamed writers whose objects aren't linked into the root yet (compaction
+/// would drop them).
+static mut WRITERS_OPEN: u32 = 0;
+
 // Serializes root-modifying writes across cooperative tasks. Each commit is a
 // read-root -> modify -> commit sequence, and the ATA writes inside it yield --
 // so without this, two tasks could both read the same root, both commit on top
@@ -103,10 +242,14 @@ static mut FS_DEPTH: u32 = 0;
 pub struct FsGuard;
 impl FsGuard {
     pub fn new() -> Self {
-        let me = crate::proc::sched::getpid() as i64;
+        // Coroutine-aware identity (coro::task_key): a green thread's commit
+        // and main's must not alias into one re-entrant owner. The spin gives
+        // green threads a turn too -- the holder may be one.
+        let me = crate::coro::task_key();
         unsafe {
             while FS_OWNER != -1 && FS_OWNER != me {
                 crate::proc::sched::yield_now();
+                crate::coro::yield_now();
             }
             FS_OWNER = me;
             FS_DEPTH += 1;
@@ -805,6 +948,53 @@ pub fn write_path_any(path: &str, content: &[u8]) -> Result<(), ()> {
     commit_deep(path, (h, Kind::Blob, make_meta(MODE_FILE_DEFAULT, next_seq())), false)
 }
 
+/// The tree entry at `path` (hash, kind, meta); None when missing or root.
+fn entry_at(path: &str) -> Option<(Hash, Kind, Meta)> {
+    let mut segs = [""; 16];
+    let n = path_segments(path, &mut segs);
+    if n == 0 {
+        return None;
+    }
+    let mut tree = root();
+    for (k, seg) in segs[..n].iter().enumerate() {
+        if tree == ZERO_HASH {
+            return None;
+        }
+        let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
+        let count = get_tree(&tree, &mut entries).ok()??;
+        let i = (0..count).find(|&i| name_eq(&entries[i].0, seg))?;
+        if k + 1 == n {
+            return Some((entries[i].1, entries[i].2, entries[i].3));
+        }
+        if !matches!(entries[i].2, Kind::Tree) {
+            return None;
+        }
+        tree = entries[i].1;
+    }
+    None
+}
+
+/// Move a file or a whole folder (hidden files included) from `from` to `to`
+/// in ONE commit: the subtree is relinked by hash, nothing is copied, and a
+/// crash leaves either the old or the new layout. Fails if `to` exists.
+pub fn move_path(from: &str, to: &str) -> Result<(), ()> {
+    let _g = FsGuard::new();
+    let leaf = entry_at(from).ok_or(())?;
+    if entry_at(to).is_some() {
+        return Err(());
+    }
+    let mut segs_to = [""; 16];
+    let nt = path_segments(to, &mut segs_to);
+    let mut segs_from = [""; 16];
+    let nf = path_segments(from, &mut segs_from);
+    if nt == 0 || nf == 0 {
+        return Err(());
+    }
+    let with_new = upsert_deep(root(), &segs_to[..nt], leaf, false)?;
+    let new_root = remove_deep(with_new, &segs_from[..nf])?.ok_or(())?;
+    commit(new_root)
+}
+
 /// Does `path` exist, and is it a folder? (None = missing.)
 pub fn path_kind(path: &str) -> Option<bool> {
     let mut segs = [""; 16];
@@ -886,8 +1076,15 @@ impl Default for ContentWriter {
     }
 }
 
+impl Drop for ContentWriter {
+    fn drop(&mut self) {
+        unsafe { WRITERS_OPEN = WRITERS_OPEN.saturating_sub(1) };
+    }
+}
+
 impl ContentWriter {
     pub fn new() -> Self {
+        unsafe { WRITERS_OPEN += 1 };
         ContentWriter {
             block: alloc::vec::Vec::with_capacity(BLOCK_SIZE),
             leaf: alloc::vec::Vec::new(),

@@ -16,16 +16,16 @@ pub const COMMIT_ENTRY_BYTES: usize = 32 + 4;
 pub const MAX_COMMITS: usize = 1024;
 pub const COMMIT_BLOCKS: usize = (MAX_COMMITS * COMMIT_ENTRY_BYTES).div_ceil(BLOCK_SIZE);
 pub const DATA_REGION_START: u32 = 1 + INDEX_BLOCKS as u32 + COMMIT_BLOCKS as u32;
-// Start the lingfs volume at 32MiB (sector 65536). The disk-boot kernel image
+// Start the lingfs volume at 128MiB (sector 262144). The disk-boot kernel image
 // is loaded contiguously from sector 18, so lingfs MUST begin past the end of
 // that image or the two overlap and filesystem writes corrupt the kernel (and
 // vice versa) -- which wiped installed accounts once the embedded wallpaper
 // pushed the WM kernel past the old 4MiB (sector 8192) mark. Raised again from
-// 16MiB when the desktop started bundling LingStationX (~23MiB image); 32MiB
-// leaves ~10MiB headroom. Only a reinstall (which reformats lingfs) ever puts a
+// 16MiB when the desktop started bundling LingStationX (~23MiB image), and to 128MiB
+// when it bundled five apps (~88MiB image: 32MiB was too small). Only a reinstall (which reformats lingfs) ever puts a
 // new kernel on a disk, so moving this never strands an installed volume.
 // `live/build-diskboot-x86_64.sh` hard-errors if a build ever exceeds it.
-pub const LINGFS_BASE_LBA: u32 = 65536;
+pub const LINGFS_BASE_LBA: u32 = 262144;
 
 #[derive(Copy, Clone)]
 pub struct IndexEntry {
@@ -64,12 +64,41 @@ pub static mut OBJECTS: ObjectTable = ObjectTable {
 /// kernel image); on the Pi's SD card, the free space after its partitions
 /// (`set_base_lba` before mounting).
 static mut BASE_LBA: u32 = LINGFS_BASE_LBA;
+/// The volume has two slots: `HOME_LBA` and the one right after it. Compaction
+/// copies the live objects into the other slot and switches by generation
+/// (the superblock with the higher one wins at mount), so a power cut while
+/// compacting leaves the old slot whole.
+static mut HOME_LBA: u32 = LINGFS_BASE_LBA;
 
 pub fn base_lba() -> u32 {
     unsafe { BASE_LBA }
 }
 
 pub fn set_base_lba(lba: u32) {
+    unsafe {
+        BASE_LBA = lba;
+        HOME_LBA = lba;
+    }
+}
+
+/// Sectors one slot spans (header, index, commit log, data blocks).
+pub const SLOT_SECTORS: u32 = (DATA_REGION_START + MAX_OBJECTS as u32) * SECTORS_PER_BLOCK as u32;
+
+pub fn home_lba() -> u32 {
+    unsafe { HOME_LBA }
+}
+
+/// The slot that isn't active.
+pub fn other_slot_lba() -> u32 {
+    if base_lba() == home_lba() {
+        home_lba() + SLOT_SECTORS
+    } else {
+        home_lba()
+    }
+}
+
+/// Make `lba` (one of the two slots) the active one.
+pub fn use_slot(lba: u32) {
     unsafe { BASE_LBA = lba };
 }
 
@@ -202,6 +231,24 @@ fn save_index_block(b: usize) -> Result<(), ()> {
 }
 
 pub fn put_object(data: &[u8]) -> Result<Hash, ()> {
+    let h = put_object_nosync(data)?;
+    save_dirty_index()?;
+    Ok(h)
+}
+
+/// Empty the in-memory object table (compaction refills it in the new slot).
+pub fn clear_table() {
+    unsafe {
+        OBJECTS.object_count = 0;
+        OBJECTS.next_free_block = 0;
+        OBJECTS.index = [EMPTY_ENTRY; MAX_OBJECTS];
+        OBJECTS.hash_slots = [0; MAX_OBJECTS];
+        OBJECTS.dirty_blocks = [false; INDEX_BLOCKS];
+    }
+}
+
+/// `put_object` without writing the index (the caller saves it once).
+pub fn put_object_nosync(data: &[u8]) -> Result<Hash, ()> {
     if data.len() > BLOCK_SIZE {
         return Err(());
     }
@@ -244,7 +291,6 @@ pub fn put_object(data: &[u8]) -> Result<Hash, ()> {
             pos = (pos + 1) % MAX_OBJECTS;
         }
     }
-    save_dirty_index()?;
     Ok(hash)
 }
 

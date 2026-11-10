@@ -15,8 +15,9 @@
 // `--features cuda` fails to build, match cudarc's CUDA-version feature to your
 // installed toolkit (this machine has CUDA 12.8).
 
-use crate::{Backend, CameraParams};
-use cudarc::driver::{CudaDevice, DriverError, LaunchAsync, LaunchConfig};
+use crate::{Backend, CameraParams, ViewWarp};
+use cudarc::driver::{CudaDevice, CudaSlice, DeviceRepr, DeviceSlice, DriverError, LaunchAsync, LaunchConfig};
+use std::sync::Mutex;
 use cudarc::nvrtc::compile_ptx;
 use std::sync::Arc;
 
@@ -69,6 +70,61 @@ void project_points(const float* world, float* out, const float* cam, int n) {
     out[3*i+2] = rz;
 }
 
+// Full camera projection incl. view roll and the hyperbolic warp (set_camera_hyper): the device twin of
+// ling_gpu::project_warped / Camera3D::project. One thread per vertex; the camera rides in a by-value struct
+// (kernel-param constant bank), so a frame costs no extra host->device copy for it.
+struct CamPack {
+    float cry, sry, crx, srx, cx, cy, focal, zdist, tx, ty, tz;
+    float crz, srz, hyp_r, hyp_s, hx, hy, hz;
+};
+extern "C" __global__
+void project_points_warped(const float* __restrict__ world, float* __restrict__ out, CamPack c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float wx = world[3*i], wy = world[3*i+1], wz = world[3*i+2];
+    if (c.hyp_r > 0.0f) {
+        float vx = wx - c.tx, vy = wy - c.ty, vz = wz - c.tz;
+        float qx = vx*c.cry - vz*c.sry;
+        float qz1 = vx*c.sry + vz*c.cry;
+        float qy = vy*c.crx - qz1*c.srx;
+        float qz = vy*c.srx + qz1*c.crx;
+        float eye = qz + c.zdist;
+        float k_front = fminf(fmaxf((eye - 1.0f) / 6.0f, 0.0f), 1.0f);
+        float tan_h = fmaxf(c.cx / fmaxf(c.focal, 1.0f), 0.05f);
+        float e = fmaxf(eye, 0.1f) * tan_h;
+        float r2 = qx*qx + qy*qy;
+        float lim = 1.8f * e;
+        if (k_front > 0.0f && r2 < lim*lim) {
+            float q = sqrtf(r2) / e;
+            float k = k_front * fminf(fmaxf((1.8f - q) / 0.6f, 0.0f), 1.0f);
+            if (k > 0.0f) {
+                float dx = wx - c.hx, dz = wz - c.hz;
+                float d = sqrtf(dx*dx + dz*dz);
+                if (d > 1e-4f) { float s = c.hyp_r * tanhf(d / c.hyp_r) / d; dx *= s; dz *= s; }
+                float u = dx*c.cry - dz*c.sry;
+                float v = dx*c.sry + dz*c.cry;
+                float raw = c.hyp_s * (v*v - u*u) / c.hyp_r;
+                float f = fminf(fmaxf((wy - c.hy) / 12.0f, -1.0f), 1.0f);
+                float wy2 = wy + 9.0f * tanhf(raw / 9.0f) * f;
+                wx = wx + (c.hx + dx - wx) * k;
+                wy = wy + (wy2 - wy) * k;
+                wz = wz + (c.hz + dz - wz) * k;
+            }
+        }
+    }
+    wx -= c.tx; wy -= c.ty; wz -= c.tz;
+    float rx  = wx*c.cry - wz*c.sry;
+    float rz1 = wx*c.sry + wz*c.cry;
+    float ry  = wy*c.crx - rz1*c.srx;
+    float rz  = wy*c.srx + rz1*c.crx;
+    float rrx = rx*c.crz - ry*c.srz;
+    float rry = rx*c.srz + ry*c.crz;
+    float dd = rz + c.zdist;
+    out[3*i]   = c.cx + c.focal * rrx / dd;
+    out[3*i+1] = c.cy + c.focal * rry / dd;
+    out[3*i+2] = rz;
+}
+
 // Depth-buffered triangle raster. One thread per triangle walks its bounding box; for every covered pixel centre it
 // interpolates 1/depth and keeps the nearest triangle with a 64-bit atomicMax on (depth bits << 32 | triangle + 1) -
 // positive floats order like their bit patterns, so a larger key is nearer, and a later triangle wins a tie.
@@ -118,11 +174,55 @@ void raster_resolve(const unsigned long long* vis, const unsigned int* col, unsi
 /// device. N-body is O(n²) so its break-even is far smaller than projection's.
 const MULTI_GPU_MIN_NBODY: usize = 2_048;
 const MULTI_GPU_MIN_PROJECT: usize = 200_000;
+/// Below this many vertices a projection stays on the (rayon) CPU. Measured on
+/// 2x RTX 4090 + 32 threads (`cuda::tests::breakdown`, `benches/gfx_pipeline`):
+/// the warped kernel itself does 4M vertices in ~0.5 ms, but cudarc 0.12 only
+/// copies from pageable memory (~3 GB/s), so upload + download of the 24 bytes
+/// per vertex cost ~8 ms per million — while all CPU cores project a million
+/// warped vertices in ~2 ms. With per-frame transfers the GPU never wins, so
+/// the crossover sits above any real scene; it pays off only once vertices stay
+/// resident on the device (see README). `LING_GPU_MIN_PROJECT` overrides it.
+const CUDA_MIN_PROJECT: usize = 8_000_000;
+
+/// The CPU/GPU crossover for projections; `LING_GPU_MIN_PROJECT` overrides it
+/// (0 = always GPU) for tuning.
+fn min_project() -> usize {
+    static MIN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN.get_or_init(|| std::env::var("LING_GPU_MIN_PROJECT").ok().and_then(|v| v.parse().ok()).unwrap_or(CUDA_MIN_PROJECT))
+}
+
+/// Kernel-argument mirror of the device `CamPack` (18 floats, by value).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CamPack {
+    cam: [f32; 11],
+    warp: [f32; 7],
+}
+// SAFETY: plain-old-data, #[repr(C)], layout matches the CUDA struct exactly.
+unsafe impl DeviceRepr for CamPack {}
+
+impl CamPack {
+    fn new(c: &CameraParams, w: &ViewWarp) -> Self {
+        CamPack {
+            cam: [c.cry, c.sry, c.crx, c.srx, c.cx, c.cy, c.focal, c.zdist, c.tx, c.ty, c.tz],
+            warp: [w.crz, w.srz, w.hyp_r, w.hyp_s, w.hx, w.hy, w.hz],
+        }
+    }
+}
+
+/// Device buffers kept across frames: a projection used to allocate (and
+/// free) its input and output on every call, which cost more than the kernel.
+#[derive(Default)]
+struct ProjBufs {
+    world: Option<CudaSlice<f32>>,
+    out: Option<CudaSlice<f32>>,
+}
 
 /// A single CUDA device with the Ling kernels loaded into its context.
 pub struct CudaBackend {
     dev: Arc<CudaDevice>,
     name: String,
+    bufs: Mutex<ProjBufs>,
 }
 
 impl CudaBackend {
@@ -133,14 +233,14 @@ impl CudaBackend {
         dev.load_ptx(
             ptx,
             "ling_gpu",
-            &["nbody_accel_range", "project_points", "raster_tris", "raster_resolve"],
+            &["nbody_accel_range", "project_points", "project_points_warped", "raster_tris", "raster_resolve"],
         )
         .ok()?;
         let name = format!(
             "CUDA[{ordinal}]: {}",
             dev.name().unwrap_or_else(|_| "NVIDIA GPU".into())
         );
-        Some(CudaBackend { dev, name })
+        Some(CudaBackend { dev, name, bufs: Mutex::new(ProjBufs::default()) })
     }
 
     fn device_name(&self) -> &str {
@@ -198,31 +298,66 @@ impl CudaBackend {
     }
 
     /// Project the point slice `world_slice` (len `3*m`) into `out_slice` (len
-    /// `3*m`). Falls back to the CPU for this slice on any driver error.
-    fn project_slice(&self, world_slice: &[f32], cam: &CameraParams, out_slice: &mut [f32]) {
+    /// `3*m`), with the view warp when `warp` is given. Reuses this device's
+    /// cached buffers. Falls back to the CPU for this slice on any driver error.
+    fn project_slice_ex(&self, world_slice: &[f32], cam: &CameraParams, warp: Option<&ViewWarp>, out_slice: &mut [f32]) {
         let m = world_slice.len() / 3;
         if m == 0 {
             return;
         }
-        let cam_v = [
-            cam.cry, cam.sry, cam.crx, cam.srx, cam.cx, cam.cy, cam.focal, cam.zdist, cam.tx,
-            cam.ty, cam.tz,
-        ];
+        let len = 3 * m;
         let mut run = || -> Result<(), DriverError> {
-            let world_d = self.dev.htod_sync_copy(world_slice)?;
-            let cam_d = self.dev.htod_sync_copy(&cam_v)?;
-            let mut out_d = self.dev.alloc_zeros::<f32>(3 * m)?;
-            let f = self.dev.get_func("ling_gpu", "project_points").unwrap();
-            let cfg = LaunchConfig::for_num_elems(m as u32);
-            unsafe {
-                f.launch(cfg, (&world_d, &mut out_d, &cam_d, m as i32))?;
+            let mut guard = self.bufs.lock().unwrap_or_else(|e| e.into_inner());
+            let bufs = &mut *guard;
+            if bufs.world.as_ref().map_or(true, |b| b.len() < len) {
+                // grow with headroom so a slowly growing scene doesn't realloc every frame
+                let cap = (len + len / 2).max(3 * 4096);
+                bufs.world = Some(unsafe { self.dev.alloc::<f32>(cap)? });
+                bufs.out = Some(unsafe { self.dev.alloc::<f32>(cap)? });
             }
-            self.dev
-                .dtoh_sync_copy_into(&out_d, &mut out_slice[..3 * m])?;
+            let world_d = bufs.world.as_mut().unwrap();
+            self.dev.htod_sync_copy_into(&world_slice[..len], &mut world_d.slice_mut(0..len))?;
+            let world_d = bufs.world.as_ref().unwrap();
+            let out_d = bufs.out.as_mut().unwrap();
+            let cfg = LaunchConfig::for_num_elems(m as u32);
+            match warp {
+                Some(w) => {
+                    let f = self.dev.get_func("ling_gpu", "project_points_warped").unwrap();
+                    unsafe { f.launch(cfg, (world_d, &mut *out_d, CamPack::new(cam, w), m as i32))? };
+                },
+                None => {
+                    let cam_v = [cam.cry, cam.sry, cam.crx, cam.srx, cam.cx, cam.cy, cam.focal, cam.zdist, cam.tx, cam.ty, cam.tz];
+                    let cam_d = self.dev.htod_sync_copy(&cam_v)?;
+                    let f = self.dev.get_func("ling_gpu", "project_points").unwrap();
+                    unsafe { f.launch(cfg, (world_d, &mut *out_d, &cam_d, m as i32))? };
+                },
+            }
+            self.dev.dtoh_sync_copy_into(&out_d.slice(0..len), &mut out_slice[..len])?;
             Ok(())
         };
         if run().is_err() {
+            match warp {
+                Some(w) => crate::cpu::project_warped_cpu(world_slice, cam, w, out_slice),
+                None => crate::cpu::CpuBackend::new().project_points(world_slice, cam, out_slice),
+            }
+        }
+    }
+
+    fn project_slice(&self, world_slice: &[f32], cam: &CameraParams, out_slice: &mut [f32]) {
+        // a typical mesh (a few thousand vertices) projects in microseconds on
+        // the CPU; the PCIe round trip alone costs ~0.1 ms, so stay on the host
+        if world_slice.len() / 3 < min_project() {
             crate::cpu::CpuBackend::new().project_points(world_slice, cam, out_slice);
+        } else {
+            self.project_slice_ex(world_slice, cam, None, out_slice)
+        }
+    }
+
+    fn project_warped(&self, world: &[f32], cam: &CameraParams, warp: &ViewWarp, out: &mut [f32]) {
+        if world.len() / 3 < min_project() {
+            crate::cpu::project_warped_cpu(world, cam, warp, out);
+        } else {
+            self.project_slice_ex(world, cam, Some(warp), out);
         }
     }
 }
@@ -289,6 +424,10 @@ impl Backend for CudaBackend {
     fn project_points(&self, world: &[f32], cam: &CameraParams, out: &mut [f32]) {
         self.project_slice(world, cam, out);
     }
+
+    fn project_points_warped(&self, world: &[f32], cam: &CameraParams, warp: &ViewWarp, out: &mut [f32]) {
+        self.project_warped(world, cam, warp, out);
+    }
 }
 
 /// Two-or-more CUDA devices driven concurrently. For large batches the output
@@ -299,10 +438,59 @@ pub struct MultiCudaBackend {
     name: String,
 }
 
+/// The shared-library names cudarc 0.12 tries for `lib` (its
+/// `get_lib_name_candidates`, which is crate-private), for API 12.6 -- kept in
+/// step with the `cuda-12060` feature in Cargo.toml.
+fn lib_candidates(lib: &str) -> Vec<String> {
+    use std::env::consts::{DLL_PREFIX as P, DLL_SUFFIX as S};
+    let (major, minor) = ("12", "6");
+    vec![
+        format!("{P}{lib}{S}"),
+        format!("{P}{lib}64{S}"),
+        format!("{P}{lib}64_{major}{S}"),
+        format!("{P}{lib}64_{major}{minor}{S}"),
+        format!("{P}{lib}64_{major}{minor}_0{S}"),
+        format!("{P}{lib}64_{major}0_{minor}{S}"),
+        format!("{P}{lib}64_10{S}"),
+        format!("{P}{lib}64_{major}0_0{S}"),
+        format!("{P}{lib}64_9{S}"),
+        format!("{P}{lib}{S}.{major}"),
+        format!("{P}{lib}{S}.11"),
+        format!("{P}{lib}{S}.10"),
+    ]
+}
+
+fn loadable(names: &[String]) -> bool {
+    // SAFETY: loading a vendor library runs its initialisers; these are the
+    // same libraries cudarc would load next.
+    names.iter().any(|n| unsafe { libloading::Library::new(n) }.is_ok())
+}
+
+/// Ok when both the driver (libcuda / nvcuda) and NVRTC can be loaded.
+fn cuda_libraries_present() -> Result<(), &'static str> {
+    let mut driver = lib_candidates("cuda");
+    driver.extend(lib_candidates("nvcuda"));
+    if !loadable(&driver) {
+        return Err("no NVIDIA driver library (libcuda)");
+    }
+    if !loadable(&lib_candidates("nvrtc")) {
+        return Err("NVIDIA driver found but no NVRTC (libnvrtc): install the CUDA toolkit to use the GPU");
+    }
+    Ok(())
+}
+
 impl MultiCudaBackend {
     /// Enumerate every usable CUDA device and load the kernels on each. Returns
     /// `None` if no device initialises (caller then uses the CPU backend).
     pub fn new() -> Option<Self> {
+        // cudarc panics (and release builds abort) when libcuda or libnvrtc
+        // cannot be loaded, so probe both first: a machine with no NVIDIA
+        // driver, or with the driver but no CUDA toolkit (a common gaming
+        // setup: libcuda yes, libnvrtc no), falls back to the CPU instead.
+        if let Err(missing) = cuda_libraries_present() {
+            eprintln!("ling-gpu: {missing}; using the CPU backend");
+            return None;
+        }
         let count = CudaDevice::count().ok()?.max(0) as usize;
         let mut devs = Vec::new();
         for ord in 0..count {
@@ -396,5 +584,73 @@ impl Backend for MultiCudaBackend {
                 });
             }
         });
+    }
+
+    fn project_points_warped(&self, world: &[f32], cam: &CameraParams, warp: &ViewWarp, out: &mut [f32]) {
+        let n = world.len() / 3;
+        let k = self.devs.len();
+        if k <= 1 || n < MULTI_GPU_MIN_PROJECT {
+            self.devs[0].project_warped(world, cam, warp, out);
+            return;
+        }
+        let ranges = crate::split_ranges(n, k);
+        let mut rest: &mut [f32] = out;
+        let mut subs: Vec<&mut [f32]> = Vec::with_capacity(k);
+        for &(lo, hi) in &ranges {
+            let (a, b) = rest.split_at_mut(3 * (hi - lo));
+            subs.push(a);
+            rest = b;
+        }
+        let devs = &self.devs;
+        std::thread::scope(|s| {
+            for ((dev, &(lo, hi)), sub) in devs.iter().zip(ranges.iter()).zip(subs) {
+                let world_slice = &world[3 * lo..3 * hi];
+                s.spawn(move || dev.project_warped(world_slice, cam, warp, sub));
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `cargo test -p ling-gpu --release --features cuda -- --ignored --nocapture breakdown`
+    /// Where the time goes in one warped projection: upload / kernel / download.
+    #[test]
+    #[ignore]
+    fn breakdown() {
+        let Some(b) = CudaBackend::on_ordinal(0) else { return };
+        let (cam, warp) = (
+            CameraParams { cry: 0.8, sry: 0.6, crx: 0.95, srx: 0.31, cx: 960.0, cy: 540.0, focal: 1080.0, zdist: 5.0, tx: 0.0, ty: 0.0, tz: -6.0 },
+            ViewWarp { crz: 1.0, srz: 0.0, hyp_r: 8.0, hyp_s: 0.6, hx: 0.0, hy: 0.0, hz: 0.0 },
+        );
+        for n in [50_000usize, 1_000_000, 4_000_000] {
+            let world: Vec<f32> = (0..3 * n).map(|i| ((i as f32 * 0.618).fract() - 0.5) * 30.0).collect();
+            let mut out = vec![0f32; 3 * n];
+            let mut w_d = b.dev.htod_sync_copy(&world).unwrap();
+            let mut o_d = b.dev.alloc_zeros::<f32>(3 * n).unwrap();
+            let f = b.dev.get_func("ling_gpu", "project_points_warped").unwrap();
+            let (mut up, mut k, mut down) = (0f64, 0f64, 0f64);
+            let reps = 20;
+            for _ in 0..reps {
+                let t = std::time::Instant::now();
+                b.dev.htod_sync_copy_into(&world, &mut w_d).unwrap();
+                up += t.elapsed().as_secs_f64();
+                let t = std::time::Instant::now();
+                unsafe { f.clone().launch(LaunchConfig::for_num_elems(n as u32), (&w_d, &mut o_d, CamPack::new(&cam, &warp), n as i32)).unwrap() };
+                b.dev.synchronize().unwrap();
+                k += t.elapsed().as_secs_f64();
+                let t = std::time::Instant::now();
+                b.dev.dtoh_sync_copy_into(&o_d, &mut out).unwrap();
+                down += t.elapsed().as_secs_f64();
+            }
+            let ms = |x: f64| x / reps as f64 * 1e3;
+            let gbs = |x: f64| (12 * n) as f64 / (x / reps as f64) / 1e9;
+            eprintln!(
+                "n={n:>8}: upload {:.3} ms ({:.1} GB/s) | kernel {:.3} ms | download {:.3} ms ({:.1} GB/s)",
+                ms(up), gbs(up), ms(k), ms(down), gbs(down)
+            );
+        }
     }
 }

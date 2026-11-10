@@ -1,19 +1,18 @@
+# Generated layout: English at /docs/, translations at /docs/<lang>/ with the
+# same page paths. Build all five with:  python docs/tools/build.py
 [book]
-title = "Ling Language Reference"
-description = "The Omniglot Systems Language — multilingual scripting and 3D visual programming"
+title = "Ling Documentation"
+description = "The Omniglot Systems Language: write in English, 中文, 日本語, 한국어 or ไทย and run everywhere."
 authors = ["Ling Lin", "Sanny Lin"]
 language = "en"
 src = "src"
 
+[build]
+build-dir = "book"
+
 [output.html]
-site-url = "/"
+site-url = "/docs/"
 git-repository-url = "https://github.com/taellinglin/ling"
-# git-repository-icon disabled because bundled mdBook FontAwesome build
-# doesn't include a valid `regular` icon named here.
-# git-repository-icon = ""
-
-
-
 edit-url-template = "https://github.com/taellinglin/ling/edit/master/docs/src/{path}"
 additional-css = ["custom.css"]
 additional-js = ["lang.js"]
@@ -22,5 +21,5 @@ no-section-label = false
 [output.html.playground]
 editable = false
 
-[preprocessor.index]
-[preprocessor.links]
+[output.html.search]
+enable = true

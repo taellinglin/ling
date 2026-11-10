@@ -19,9 +19,71 @@ use core::arch::global_asm;
 extern "C" {
     static stack_top: u8;
     static _kernel_end: u8;
+    static ling_boot_pml4: u8;
+    static ling_boot_pd_hi: u8;
 }
 
-/// Top of the 512 KiB stack `_start` switched onto before `kernel_entry` —
+/// IA32_PAT with entry 1 (PWT=1, PCD=0) turned from write-through into
+/// write-combining, the memory type a framebuffer wants. Every core must use
+/// the same PAT; `smp.rs` / `cpudrv.rs` call this on the others.
+pub fn set_pat_wc() {
+    unsafe {
+        if super::cpu::cpuid(1, 0).3 & (1 << 16) == 0 {
+            return; // no PAT
+        }
+        let pat = super::cpu::read_msr(0x277);
+        super::cpu::write_msr(0x277, (pat & !0xFF00) | 0x0100);
+    }
+}
+
+/// Map [phys, phys+len) above 4 GiB -- a framebuffer -- into the boot page
+/// tables (2 MiB pages, write-combining), before `paging::init` builds the
+/// real ones. Only one 1 GiB-aligned gigabyte can be added; false otherwise.
+pub fn map_high_early(phys: u64, len: u64) -> bool {
+    let gb = phys >> 30;
+    if len == 0 || (phys + len - 1) >> 30 != gb || gb >= 512 || gb < 4 {
+        return false;
+    }
+    set_pat_wc();
+    unsafe {
+        let pdpt = ((&raw const ling_boot_pml4) as u64 + 4096) as *mut u64;
+        let pd = (&raw const ling_boot_pd_hi) as u64;
+        for i in 0..512u64 {
+            // present | writable | PWT (PAT entry 1 = write-combining) | 2 MiB
+            core::ptr::write_volatile((pd as *mut u64).add(i as usize), ((gb << 30) + (i << 21)) | 0x8B);
+        }
+        core::ptr::write_volatile(pdpt.add(gb as usize), pd | 0x3);
+        super::cpu::write_cr3(super::cpu::read_cr3());
+    }
+    true
+}
+
+extern "C" {
+    static mut stack_bottom: u8;
+}
+const STACK_CANARY: u64 = 0x4C49_4E47_5354_4B21; // "LINGSTK!"
+
+/// Plant the canary in the lowest 256 bytes of the boot stack (call early, while
+/// the stack is shallow). If anything ever runs the stack that deep, the next
+/// `stack_guard_ok` says so instead of the overflow silently trashing `.got`.
+pub fn stack_guard_arm() {
+    unsafe {
+        let p = (&raw mut stack_bottom) as *mut u64;
+        for i in 0..32 {
+            core::ptr::write_volatile(p.add(i), STACK_CANARY);
+        }
+    }
+}
+
+/// False once the boot stack has been used down to its last 256 bytes.
+pub fn stack_guard_ok() -> bool {
+    unsafe {
+        let p = (&raw const stack_bottom) as *const u64;
+        (0..32).all(|i| core::ptr::read_volatile(p.add(i)) == STACK_CANARY)
+    }
+}
+
+/// Top of the 4 MiB stack `_start` switched onto before `kernel_entry` —
 /// the only stack that exists this early, so it's what `gdt::init` points
 /// the TSS's `RSP0` at (used if a future ring-3 interrupt/syscall needs a
 /// known-good kernel stack; unused while everything still runs in ring 0).
@@ -250,6 +312,10 @@ gdt64_pointer:
 mb2_info_ptr:
     .skip 4
 .align 4096
+// Global so the SMP trampoline (smp.rs) can enter long mode on the other cores
+// through this same flat 4 GiB identity map before they switch to the real one.
+.global ling_boot_pml4
+ling_boot_pml4:
 pml4:
     .skip 4096
 pdpt:
@@ -262,9 +328,21 @@ pd2:
     .skip 4096
 pd3:
     .skip 4096
+// One spare page directory: maps the 1 GiB around a framebuffer above 4 GiB
+// (UEFI + a discrete GPU puts it in BAR1, e.g. 0x40_0000_0000) until the
+// kernel's own page tables exist. Filled from Rust (`map_high_early`).
+.global ling_boot_pd_hi
+ling_boot_pd_hi:
+    .skip 4096
 .align 16
+.global stack_bottom
 stack_bottom:
-    // 512KiB. Slot 0 (the desktop loop / main task) never gets one of
+    // 4 MiB (was 512 KiB until 2026-11-09: sign-in's keyring + Messenger
+    // identity -- ML-DSA / ML-KEM frames of 364 KiB and 128 KiB -- ran this
+    // stack down through .bss's start into .got, the linker's address table
+    // just below it, and every bundled app (LingDev, LingStation) then jumped
+    // through trashed pointers; `stack_guard_ok` now reports such an
+    // overflow). Slot 0 (the desktop loop / main task) never gets one of
     // sched.rs's spawned STACKS -- it keeps running on THIS stack. It does far
     // more than early boot now: the whole window-manager frame loop plus, on
     // demand, post-quantum crypto (opening Messenger calls `my_ling_id()` ->
@@ -273,7 +351,7 @@ stack_bottom:
     // similar). The old 64KiB silently overflowed the moment a second, richer
     // window (Messenger) was opened -- a corrupted return address faulted with
     // a non-canonical rip. This is BSS (zero-filled at boot, not on disk).
-    .skip 524288
+    .skip 4194304
 .global stack_top
 stack_top:
 "#

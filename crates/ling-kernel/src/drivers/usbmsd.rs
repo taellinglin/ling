@@ -11,6 +11,12 @@ use crate::console_write as out;
 static mut TAG: u32 = 1;
 static mut BLOCKS: u32 = 0;
 static mut READY: bool = false;
+static mut MODEL: alloc::string::String = alloc::string::String::new();
+
+/// The drive's vendor + product (SCSI INQUIRY), for the disk installer's list.
+pub fn model() -> alloc::string::String {
+    unsafe { (*(&raw const MODEL)).clone() }
+}
 
 pub fn ready() -> bool {
     unsafe { READY }
@@ -126,6 +132,7 @@ pub fn attach() {
             out(b" ");
             out(trim(&inq[16..32]).as_bytes());
             out(b"\n");
+            unsafe { *(&raw mut MODEL) = alloc::format!("{} {}", trim(&inq[8..16]), trim(&inq[16..32])) };
         },
         _ => out(b"INQUIRY failed\n"),
     }

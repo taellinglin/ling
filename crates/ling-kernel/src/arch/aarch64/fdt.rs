@@ -81,6 +81,11 @@ fn header() -> Option<Header> {
 /// Walk the structure block calling `prop(depth, node_name, prop_name, data)`
 /// for every property.
 fn walk(h: &Header, mut prop: impl FnMut(usize, &[u8], &[u8], &[u8])) {
+    walk_with_parent(h, |depth, _parent, node, pname, data| prop(depth, node, pname, data));
+}
+
+/// `walk`, also passing the parent node's name.
+fn walk_with_parent(h: &Header, mut prop: impl FnMut(usize, &[u8], &[u8], &[u8], &[u8])) {
     let mut off = h.struct_off;
     let end = h.struct_off + h.struct_size;
     let mut depth = 0usize;
@@ -113,7 +118,8 @@ fn walk(h: &Header, mut prop: impl FnMut(usize, &[u8], &[u8], &[u8])) {
                 let pname = cstr(unsafe { h.base.add(h.strings_off + nameoff) }, h.total - h.strings_off - nameoff);
                 let data = unsafe { core::slice::from_raw_parts(h.base.add(off), len) };
                 let node = if depth >= 1 && depth - 1 < names.len() { names[depth - 1] } else { &[] };
-                prop(depth, node, pname, data);
+                let parent = if depth >= 2 && depth - 2 < names.len() { names[depth - 2] } else { &[] };
+                prop(depth, parent, node, pname, data);
                 off = (off + len + 3) & !3;
             },
             FDT_NOP => {},
@@ -165,6 +171,55 @@ pub fn memory_regions() -> ([(u64, u64); MAX_REGIONS], usize) {
         let count = data.len() / (per * 4);
         for i in 0..count {
             if n >= MAX_REGIONS {
+                break;
+            }
+            let base = cells(data, ac, i * per);
+            let size = cells(data, sc, i * per + ac);
+            if size > 0 {
+                out[n] = (base, size);
+                n += 1;
+            }
+        }
+    });
+    (out, n)
+}
+
+/// Memory the firmware keeps for itself: the `/memreserve/` block plus every
+/// `reg` under `/reserved-memory`, as `(base, size)` pairs. The frame
+/// allocator must not hand these out, though the `/memory` node lists them.
+pub fn reserved_regions() -> ([(u64, u64); 16], usize) {
+    let mut out = [(0u64, 0u64); 16];
+    let mut n = 0usize;
+    let Some(h) = header() else { return (out, 0) };
+    // the /memreserve/ block: big-endian (address, size) pairs, ended by a zero pair
+    let rd64 = |o: usize| ((be32(unsafe { h.base.add(o) }) as u64) << 32) | be32(unsafe { h.base.add(o + 4) }) as u64;
+    let mut off = be32(unsafe { h.base.add(16) }) as usize;
+    while off + 16 <= h.total && n < out.len() {
+        let (base, size) = (rd64(off), rd64(off + 8));
+        if base == 0 && size == 0 {
+            break;
+        }
+        out[n] = (base, size);
+        n += 1;
+        off += 16;
+    }
+    // /reserved-memory children: their reg uses that node's own cell counts
+    let (mut ac, mut sc) = (2usize, 1usize);
+    walk_with_parent(&h, |depth, parent, node, pname, data| {
+        if depth == 2 && node == b"reserved-memory" {
+            if pname == b"#address-cells" && data.len() >= 4 {
+                ac = (be32(data.as_ptr()) as usize).clamp(1, 2);
+            } else if pname == b"#size-cells" && data.len() >= 4 {
+                sc = (be32(data.as_ptr()) as usize).clamp(1, 2);
+            }
+            return;
+        }
+        if depth != 3 || parent != b"reserved-memory" || pname != b"reg" {
+            return;
+        }
+        let per = ac + sc;
+        for i in 0..data.len() / (per * 4) {
+            if n >= out.len() {
                 break;
             }
             let base = cells(data, ac, i * per);

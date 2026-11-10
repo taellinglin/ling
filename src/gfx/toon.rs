@@ -21,6 +21,8 @@
 //   identity; [0, 0] makes dark tones dominant (ease-in); [1, 1] brightens
 //   the ramp (ease-out); [0.1, 0.9] gives a smooth S-curve.
 
+use crate::gfx::scratch;
+
 // ── Tone ramp ────────────────────────────────────────────────────────────────
 
 /// A single stop on the tone ramp.
@@ -177,12 +179,37 @@ pub fn apply_ramp(buf: &mut [u32], width: usize, height: usize, ramp: &ToneRamp)
         return;
     }
 
+    // The brightness scale depends only on luma, so tabulate it once (1/8-luma
+    // steps) instead of walking the ramp stops for every pixel.
+    const LUT_RES: f32 = 8.0;
+    let lut: Vec<f32> = (0..=(255 * 8 + 8))
+        .map(|i| {
+            let lum = i as f32 / LUT_RES;
+            if lum < 1.5 {
+                return 1.0;
+            }
+            let t = lum / 255.0;
+            let mut new_val = sample_ramp(ramp, t);
+            // Sheen: blend bright pixels back toward their true luminance so
+            // specular / fresnel-rim gradients stay smooth instead of banding.
+            if ramp.sheen > 0.0 {
+                let k = smoothstep01((t - 0.72) / 0.20) * ramp.sheen;
+                new_val += (t - new_val) * k;
+            }
+            // Cap the brightening: dark pixels get a tight cap so shadow noise
+            // can't blow out into scratches; everything else a moderate one.
+            let maxs = if lum < 14.0 { 2.2 } else { 4.0 };
+            (new_val * 255.0 / lum).clamp(0.0, maxs)
+        })
+        .collect();
+    let empty = ramp.stops.is_empty();
+
     #[inline]
-    fn shade(p: u32, ramp: &ToneRamp) -> u32 {
+    fn shade(p: u32, lut: &[f32], empty: bool) -> u32 {
         if p & crate::gfx::UNLIT != 0 {
             return p & crate::gfx::RGB_MASK;
         }
-        if ramp.stops.is_empty() {
+        if empty {
             return p;
         }
         let r = ((p >> 16) & 0xFF) as f32;
@@ -194,18 +221,7 @@ pub fn apply_ramp(buf: &mut [u32], width: usize, height: usize, ramp: &ToneRamp)
         if lum < 1.5 {
             return p;
         }
-        let t = lum / 255.0;
-        let mut new_val = sample_ramp(ramp, t);
-        // Sheen: blend bright pixels back toward their true luminance so
-        // specular / fresnel-rim gradients stay smooth instead of banding.
-        if ramp.sheen > 0.0 {
-            let k = smoothstep01((t - 0.72) / 0.20) * ramp.sheen;
-            new_val += (t - new_val) * k;
-        }
-        // Cap the brightening: dark pixels get a tight cap so shadow noise
-        // can't blow out into scratches; everything else a moderate one.
-        let maxs = if lum < 14.0 { 2.2 } else { 4.0 };
-        let scale = (new_val * 255.0 / lum).clamp(0.0, maxs);
+        let scale = lut[(lum * LUT_RES + 0.5) as usize];
         (((r * scale).min(255.0) as u32) << 16)
             | (((g * scale).min(255.0) as u32) << 8)
             | ((b * scale).min(255.0) as u32)
@@ -216,16 +232,17 @@ pub fn apply_ramp(buf: &mut [u32], width: usize, height: usize, ramp: &ToneRamp)
         use rayon::prelude::*;
         const ROWS: usize = 32;
         let band = ROWS * width;
+        let lut = &lut;
         buf[..n].par_chunks_mut(band).for_each(|bb| {
             for px in bb.iter_mut() {
-                *px = shade(*px, ramp);
+                *px = shade(*px, lut, empty);
             }
         });
     }
 
     #[cfg(target_arch = "wasm32")]
     for px in buf[..n].iter_mut() {
-        *px = shade(*px, ramp);
+        *px = shade(*px, &lut, empty);
     }
 }
 
@@ -250,69 +267,123 @@ pub fn draw_outlines(
     color: u32,
     threshold: f32,
 ) {
-    if zbuf.len() < width * height || buf.len() < width * height {
+    let n = width * height;
+    if zbuf.len() < n || buf.len() < n {
         return;
     }
     let t = thickness.clamp(0.5, 6.0);
     let t_i = t.ceil() as i32;
     let t2 = t * t;
+    let (w, h) = (width as i32, height as i32);
+    if w <= 2 * t_i || h <= 2 * t_i {
+        return;
+    }
 
-    for y in t_i..(height as i32 - t_i) {
-        for x in t_i..(width as i32 - t_i) {
-            let idx = y as usize * width + x as usize;
-            let z = zbuf[idx];
+    // 1. Edge mask: a pixel whose depth jumps by >= threshold against any 4-neighbour
+    //    (a silhouette or crease). Same interior window as the stamping version.
+    let mut mask = scratch::take_u8(n);
+    let mask_row = |y: usize, row: &mut [u8]| {
+        row.fill(0);
+        let yi = y as i32;
+        if yi < t_i || yi >= h - t_i {
+            return;
+        }
+        let base = y * width;
+        for x in t_i as usize..(w - t_i) as usize {
+            let i = base + x;
+            let z = zbuf[i];
             if !z.is_finite() {
                 continue;
             }
-
-            let zn = zbuf[(y - 1) as usize * width + x as usize];
-            let zs = zbuf[(y + 1) as usize * width + x as usize];
-            let zw = zbuf[y as usize * width + (x - 1) as usize];
-            let ze = zbuf[y as usize * width + (x + 1) as usize];
-            let dmax = (z - zn)
+            let dmax = (z - zbuf[i - width])
                 .abs()
-                .max((z - zs).abs())
-                .max((z - zw).abs())
-                .max((z - ze).abs());
-            if dmax < threshold {
-                continue;
-            }
-
-            for dy in -t_i..=t_i {
-                for dx in -t_i..=t_i {
-                    let dist2 = (dx as f32) * (dx as f32) + (dy as f32) * (dy as f32);
-                    if dist2 > t2 {
-                        continue;
-                    }
-                    let nx = x + dx;
-                    let ny = y + dy;
-                    if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
-                        let ni = ny as usize * width + nx as usize;
-                        if buf[ni] & crate::gfx::UNLIT != 0 {
-                            continue;
-                        }
-                        let cov = (t2 - dist2).sqrt() / t.max(1.0);
-                        let cov = cov.clamp(0.0, 1.0);
-                        if cov >= 0.999 {
-                            buf[ni] = color | crate::gfx::UNLIT;
-                        } else {
-                            let dst = buf[ni];
-                            let dr = ((dst >> 16) & 0xFF) as f32;
-                            let dg = ((dst >> 8) & 0xFF) as f32;
-                            let db = (dst & 0xFF) as f32;
-                            let ir = ((color >> 16) & 0xFF) as f32;
-                            let ig = ((color >> 8) & 0xFF) as f32;
-                            let ib = (color & 0xFF) as f32;
-                            let r = (ir * cov + dr * (1.0 - cov)) as u32;
-                            let g = (ig * cov + dg * (1.0 - cov)) as u32;
-                            let b = (ib * cov + db * (1.0 - cov)) as u32;
-                            buf[ni] = (r << 16) | (g << 8) | b | crate::gfx::UNLIT;
-                        }
-                    }
-                }
+                .max((z - zbuf[i + width]).abs())
+                .max((z - zbuf[i - 1]).abs())
+                .max((z - zbuf[i + 1]).abs());
+            if dmax >= threshold {
+                row[x] = 1;
             }
         }
+    };
+    // 2. Row pass: distance (in px, capped) to the nearest edge pixel in the same row.
+    const FAR: u8 = 255;
+    let mut hdist = scratch::take_u8(n);
+    let hdist_row = |mask: &[u8], y: usize, row: &mut [u8]| {
+        let m = &mask[y * width..y * width + width];
+        let mut last = -1_000i32;
+        for x in 0..width {
+            if m[x] != 0 {
+                last = x as i32;
+            }
+            row[x] = (x as i32 - last).min(FAR as i32) as u8;
+        }
+        let mut next = 1_000_000i32;
+        for x in (0..width).rev() {
+            if m[x] != 0 {
+                next = x as i32;
+            }
+            let d = (next - x as i32).min(FAR as i32) as u8;
+            if d < row[x] {
+                row[x] = d;
+            }
+        }
+    };
+    // 3. Column pass + ink: each pixel's squared distance to its nearest edge pixel
+    //    is min over dy of (row distance at y+dy)² + dy² (exact Euclidean within the
+    //    window); coverage falls off with that distance like the old disc stamp.
+    let ink = |hdist: &[u8], y: usize, row: &mut [u32]| {
+        let yi = y as i32;
+        let (y0, y1) = ((yi - t_i).max(0), (yi + t_i).min(h - 1));
+        let ir = ((color >> 16) & 0xFF) as f32;
+        let ig = ((color >> 8) & 0xFF) as f32;
+        let ib = (color & 0xFF) as f32;
+        for (x, px) in row.iter_mut().enumerate() {
+            if *px & crate::gfx::UNLIT != 0 {
+                continue;
+            }
+            let mut best = i32::MAX;
+            for yy in y0..=y1 {
+                let dx = hdist[yy as usize * width + x] as i32;
+                if dx <= t_i {
+                    let dy = yy - yi;
+                    best = best.min(dx * dx + dy * dy);
+                }
+            }
+            if best == i32::MAX || best as f32 > t2 {
+                continue;
+            }
+            let cov = ((t2 - best as f32).sqrt() / t.max(1.0)).clamp(0.0, 1.0);
+            if cov >= 0.999 {
+                *px = color | crate::gfx::UNLIT;
+            } else {
+                let dst = *px;
+                let dr = ((dst >> 16) & 0xFF) as f32;
+                let dg = ((dst >> 8) & 0xFF) as f32;
+                let db = (dst & 0xFF) as f32;
+                let r = (ir * cov + dr * (1.0 - cov)) as u32;
+                let g = (ig * cov + dg * (1.0 - cov)) as u32;
+                let b = (ib * cov + db * (1.0 - cov)) as u32;
+                *px = (r << 16) | (g << 8) | b | crate::gfx::UNLIT;
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        mask[..n].par_chunks_mut(width).enumerate().for_each(|(y, r)| mask_row(y, r));
+        let m = &mask;
+        hdist[..n].par_chunks_mut(width).enumerate().for_each(|(y, r)| hdist_row(m, y, r));
+        let hd = &hdist;
+        buf[..n].par_chunks_mut(width).enumerate().for_each(|(y, r)| ink(hd, y, r));
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        mask[..n].chunks_mut(width).enumerate().for_each(|(y, r)| mask_row(y, r));
+        hdist[..n].chunks_mut(width).enumerate().for_each(|(y, r)| hdist_row(&mask, y, r));
+        buf[..n].chunks_mut(width).enumerate().for_each(|(y, r)| ink(&hdist, y, r));
+    }
+    scratch::put_u8(mask);
+    scratch::put_u8(hdist);
 }
 
 // ── Screen-space ambient occlusion ────────────────────────────────────────────
@@ -494,15 +565,13 @@ pub fn apply_bloom(buf: &mut [u32], width: usize, height: usize, strength: f32, 
     let thresh = thresh.clamp(0.0, 0.99);
     let inv_span = 1.0 / (1.0 - thresh);
 
-    // 1. Downsample 4×4 (2×2 taps) with luminance threshold.
-    let mut sr = vec![0.0f32; bn];
-    let mut sg = vec![0.0f32; bn];
-    let mut sb = vec![0.0f32; bn];
-    for by in 0..bh {
+    // 1. Downsample 4×4 (2×2 taps) with luminance threshold, rows in parallel.
+    //    The three channels live interleaved in one plane so every later pass
+    //    touches one buffer instead of three.
+    let mut s = scratch::take_f32(3 * bn);
+    let down_row = |by: usize, row: &mut [f32]| {
         for bx in 0..bw {
-            let mut r = 0.0f32;
-            let mut g = 0.0f32;
-            let mut b = 0.0f32;
+            let (mut r, mut g, mut b) = (0.0f32, 0.0f32, 0.0f32);
             for (ox, oy) in [(1usize, 1usize), (3, 1), (1, 3), (3, 3)] {
                 let x = (bx * 4 + ox).min(width - 1);
                 let y = (by * 4 + oy).min(height - 1);
@@ -517,67 +586,81 @@ pub fn apply_bloom(buf: &mut [u32], width: usize, height: usize, strength: f32, 
             let lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
             let keep = ((lum - thresh) * inv_span).clamp(0.0, 1.0);
             let keep = keep * keep; // soft knee
-            let i = by * bw + bx;
-            sr[i] = r * keep;
-            sg[i] = g * keep;
-            sb[i] = b * keep;
-        }
-    }
-
-    // 2. Two separable box-blur passes (radius 2) on the small buffers.
-    let blur_small = |src: &mut Vec<f32>| {
-        let mut tmp = vec![0.0f32; bn];
-        for _ in 0..2 {
-            for y in 0..bh {
-                let row = y * bw;
-                for x in 0..bw {
-                    let mut acc = 0.0f32;
-                    for k in -2i32..=2 {
-                        let xx = (x as i32 + k).clamp(0, bw as i32 - 1) as usize;
-                        acc += src[row + xx];
-                    }
-                    tmp[row + x] = acc * 0.2;
-                }
-            }
-            for x in 0..bw {
-                for y in 0..bh {
-                    let mut acc = 0.0f32;
-                    for k in -2i32..=2 {
-                        let yy = (y as i32 + k).clamp(0, bh as i32 - 1) as usize;
-                        acc += tmp[yy * bw + x];
-                    }
-                    src[y * bw + x] = acc * 0.2;
-                }
-            }
+            row[3 * bx] = r * keep;
+            row[3 * bx + 1] = g * keep;
+            row[3 * bx + 2] = b * keep;
         }
     };
-    blur_small(&mut sr);
-    blur_small(&mut sg);
-    blur_small(&mut sb);
 
-    // 3. Bilinear upsample, scale, saturating-add into the frame.
-    let add_row = |y: usize, row: &mut [u32]| {
+    // 2. Two separable box-blur passes (radius 2, clamp-to-edge). Both directions
+    //    run row-parallel and read rows contiguously (the vertical pass used to
+    //    walk columns, a cache miss per tap).
+    let mut tmp = scratch::take_f32(3 * bn);
+    let bwi = bw as i32;
+    let bhi = bh as i32;
+    let hpass = |src: &[f32], y: usize, out: &mut [f32]| {
+        let row = &src[y * 3 * bw..(y + 1) * 3 * bw];
+        for x in 0..bw {
+            let (mut r, mut g, mut b) = (0.0f32, 0.0f32, 0.0f32);
+            for k in -2i32..=2 {
+                let xx = (x as i32 + k).clamp(0, bwi - 1) as usize;
+                r += row[3 * xx];
+                g += row[3 * xx + 1];
+                b += row[3 * xx + 2];
+            }
+            out[3 * x] = r * 0.2;
+            out[3 * x + 1] = g * 0.2;
+            out[3 * x + 2] = b * 0.2;
+        }
+    };
+    let vpass = |src: &[f32], y: usize, out: &mut [f32]| {
+        out.fill(0.0);
+        for k in -2i32..=2 {
+            let yy = (y as i32 + k).clamp(0, bhi - 1) as usize;
+            let row = &src[yy * 3 * bw..(yy + 1) * 3 * bw];
+            for (o, v) in out.iter_mut().zip(row) {
+                *o += *v;
+            }
+        }
+        for o in out.iter_mut() {
+            *o *= 0.2;
+        }
+    };
+
+    // 3. Bilinear upsample, scale, saturating-add into the frame. Separable:
+    //    each output row first lerps its two source rows once (scaled by
+    //    `strength`), then every pixel lerps two neighbours of that row through a
+    //    per-column table — and a row whose glow stays under one colour level
+    //    (most of a typical frame) is skipped outright.
+    let cols: Vec<(u32, u32, f32)> = (0..width)
+        .map(|x| {
+            let gx = x as f32 * 0.25;
+            let bx0 = (gx as usize).min(bw - 1);
+            ((3 * bx0) as u32, (3 * (bx0 + 1).min(bw - 1)) as u32, gx - bx0 as f32)
+        })
+        .collect();
+    let add_row = |s: &[f32], y: usize, row: &mut [u32], rowv: &mut Vec<f32>| {
         let gy = y as f32 * 0.25;
         let by0 = (gy as usize).min(bh - 1);
         let by1 = (by0 + 1).min(bh - 1);
         let fy = gy - by0 as f32;
-        for (x, px) in row.iter_mut().enumerate() {
-            let gx = x as f32 * 0.25;
-            let bx0 = (gx as usize).min(bw - 1);
-            let bx1 = (bx0 + 1).min(bw - 1);
-            let fx = gx - bx0 as f32;
-            let i00 = by0 * bw + bx0;
-            let i10 = by0 * bw + bx1;
-            let i01 = by1 * bw + bx0;
-            let i11 = by1 * bw + bx1;
-            let bl = |s: &[f32]| -> f32 {
-                let a = s[i00] * (1.0 - fx) + s[i10] * fx;
-                let b = s[i01] * (1.0 - fx) + s[i11] * fx;
-                (a * (1.0 - fy) + b * fy) * strength
-            };
-            let ar = bl(&sr) as u32;
-            let ag = bl(&sg) as u32;
-            let ab = bl(&sb) as u32;
+        let r0 = &s[by0 * 3 * bw..(by0 + 1) * 3 * bw];
+        let r1 = &s[by1 * 3 * bw..(by1 + 1) * 3 * bw];
+        rowv.clear();
+        let mut peak = 0.0f32;
+        rowv.extend(r0.iter().zip(r1).map(|(a, b)| {
+            let v = (a * (1.0 - fy) + b * fy) * strength;
+            peak = peak.max(v);
+            v
+        }));
+        if peak < 1.0 {
+            return; // every channel would truncate to 0 — nothing to add
+        }
+        for (px, &(i0, i1, fx)) in row.iter_mut().zip(&cols) {
+            let (i0, i1) = (i0 as usize, i1 as usize);
+            let ar = (rowv[i0] * (1.0 - fx) + rowv[i1] * fx) as u32;
+            let ag = (rowv[i0 + 1] * (1.0 - fx) + rowv[i1 + 1] * fx) as u32;
+            let ab = (rowv[i0 + 2] * (1.0 - fx) + rowv[i1 + 2] * fx) as u32;
             if ar | ag | ab == 0 {
                 continue;
             }
@@ -588,18 +671,35 @@ pub fn apply_bloom(buf: &mut [u32], width: usize, height: usize, strength: f32, 
             *px = (r << 16) | (g << 8) | b;
         }
     };
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
+        s.par_chunks_mut(3 * bw).enumerate().for_each(|(y, r)| down_row(y, r));
+        for _ in 0..2 {
+            tmp.par_chunks_mut(3 * bw).enumerate().for_each(|(y, r)| hpass(&s, y, r));
+            s.par_chunks_mut(3 * bw).enumerate().for_each(|(y, r)| vpass(&tmp, y, r));
+        }
+        let s = &s;
         buf[..n]
             .par_chunks_mut(width)
             .enumerate()
-            .for_each(|(y, row)| add_row(y, row));
+            .for_each_init(|| Vec::with_capacity(3 * bw), |rowv, (y, row)| add_row(s, y, row, rowv));
     }
     #[cfg(target_arch = "wasm32")]
-    for (y, row) in buf[..n].chunks_mut(width).enumerate() {
-        add_row(y, row);
+    {
+        s.chunks_mut(3 * bw).enumerate().for_each(|(y, r)| down_row(y, r));
+        for _ in 0..2 {
+            tmp.chunks_mut(3 * bw).enumerate().for_each(|(y, r)| hpass(&s, y, r));
+            s.chunks_mut(3 * bw).enumerate().for_each(|(y, r)| vpass(&tmp, y, r));
+        }
+        let mut rowv = Vec::with_capacity(3 * bw);
+        for (y, row) in buf[..n].chunks_mut(width).enumerate() {
+            add_row(&s, y, row, &mut rowv);
+        }
     }
+    scratch::put_f32(s);
+    scratch::put_f32(tmp);
 }
 
 // ── Anti-aliasing (FXAA-lite) ─────────────────────────────────────────────────
@@ -613,32 +713,42 @@ pub fn apply_fxaa(buf: &mut [u32], width: usize, height: usize) {
     if width < 3 || height < 3 || buf.len() < n {
         return;
     }
-    let snap = buf[..n].to_vec();
     #[inline]
-    fn luma(p: u32) -> i32 {
-        ((((p >> 16) & 0xFF) * 77 + ((p >> 8) & 0xFF) * 150 + (p & 0xFF) * 29) >> 8) as i32
+    fn luma(p: u32) -> u8 {
+        ((((p >> 16) & 0xFF) * 77 + ((p >> 8) & 0xFF) * 150 + (p & 0xFF) * 29) >> 8) as u8
     }
-    let aa_row = |y: usize, row: &mut [u32]| {
+    // Snapshot + luma plane, both reused across frames (the snapshot used to be
+    // a fresh 8 MB allocation per frame at 1080p) and luma computed once per
+    // pixel instead of five times.
+    let mut snap = scratch::take_u32(n);
+    let mut lum = scratch::take_u8(n);
+    let prep = |(src, (s, l)): (&[u32], (&mut [u32], &mut [u8]))| {
+        s.copy_from_slice(src);
+        for (lo, &p) in l.iter_mut().zip(src) {
+            *lo = luma(p);
+        }
+    };
+    let aa_row = |snap: &[u32], lum: &[u8], y: usize, row: &mut [u32]| {
         if y == 0 || y >= height - 1 {
             return;
         }
         let base = y * width;
         for (x, cell) in row.iter_mut().enumerate().take(width - 1).skip(1) {
             let i = base + x;
+            let l = lum[i] as i32;
+            let d = (l - lum[i - width] as i32)
+                .abs()
+                .max((l - lum[i + width] as i32).abs())
+                .max((l - lum[i - 1] as i32).abs())
+                .max((l - lum[i + 1] as i32).abs());
+            if d < 24 {
+                continue; // flat area — untouched
+            }
             let c = snap[i];
-            let l = luma(c);
             let pn = snap[i - width];
             let ps = snap[i + width];
             let pw = snap[i - 1];
             let pe = snap[i + 1];
-            let d = (l - luma(pn))
-                .abs()
-                .max((l - luma(ps)).abs())
-                .max((l - luma(pw)).abs())
-                .max((l - luma(pe)).abs());
-            if d < 24 {
-                continue; // flat area — untouched
-            }
             // Blend weight rises with contrast: 25%..45%.
             let k = (0.25 + ((d - 24) as f32 / 90.0).clamp(0.0, 1.0) * 0.20).min(0.45);
             let ki = (k * 256.0) as u32;
@@ -656,15 +766,20 @@ pub fn apply_fxaa(buf: &mut [u32], width: usize, height: usize) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
-        buf[..n]
-            .par_chunks_mut(width)
-            .enumerate()
-            .for_each(|(y, row)| aa_row(y, row));
+        const CH: usize = 16 * 1024;
+        buf[..n].par_chunks(CH).zip(snap.par_chunks_mut(CH).zip(lum.par_chunks_mut(CH))).for_each(prep);
+        let (s, l) = (&snap, &lum);
+        buf[..n].par_chunks_mut(width).enumerate().for_each(|(y, row)| aa_row(s, l, y, row));
     }
     #[cfg(target_arch = "wasm32")]
-    for (y, row) in buf[..n].chunks_mut(width).enumerate() {
-        aa_row(y, row);
+    {
+        prep((&buf[..n], (&mut snap[..], &mut lum[..])));
+        for (y, row) in buf[..n].chunks_mut(width).enumerate() {
+            aa_row(&snap, &lum, y, row);
+        }
     }
+    scratch::put_u32(snap);
+    scratch::put_u8(lum);
 }
 
 // ── ToonConfig ────────────────────────────────────────────────────────────────

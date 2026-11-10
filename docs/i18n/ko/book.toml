@@ -1,0 +1,25 @@
+# Generated layout: English at /docs/, translations at /docs/<lang>/ with the
+# same page paths. Build all five with:  python docs/tools/build.py
+[book]
+title = "Ling 문서"
+description = "옴니글롯 시스템 언어: 영어, 중국어, 일본어, 한국어, 태국어로 작성하고 어디서나 실행하세요."
+authors = ["Ling Lin", "Sanny Lin"]
+language = "ko"
+src = "src"
+
+[build]
+build-dir = "../../book/ko"
+
+[output.html]
+site-url = "/docs/ko/"
+git-repository-url = "https://github.com/taellinglin/ling"
+edit-url-template = "https://github.com/taellinglin/ling/edit/master/docs/i18n/ko/src/{path}"
+additional-css = ["custom.css"]
+additional-js = ["lang.js"]
+no-section-label = false
+
+[output.html.playground]
+editable = false
+
+[output.html.search]
+enable = true

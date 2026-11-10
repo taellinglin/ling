@@ -28,12 +28,12 @@
 use crate::arch::timer;
 use crate::drivers::netstack;
 #[cfg(target_arch = "x86_64")]
-use crate::drivers::{font8x8, framebuffer, mixer, theme};
+use crate::drivers::{font8x8, framebuffer, mixer};
 use crate::fs::lingfs;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use ling_messenger::identity::PublicIdentity;
-use ling_messenger::{handshake, wire, Identity, LingId, Roster, Session};
+use ling_messenger::{handshake, link, vault, wire, Identity, LingId, Roster, Session};
 
 /// Fixed UDP port for discovery beacons and the handshake/chat traffic that
 /// follows -- one well-known port, same spirit as `bring`'s fixed HTTP
@@ -74,6 +74,7 @@ struct Conversation {
     we_dialed: bool,   // we were the initiator (tie-break for simultaneous dials)
     last_ping_ms: u64, // receive-side ping rate limit
     dead: bool,        // send/decrypt failed: drop it, the next send re-dials
+    typing_until_ms: u64, // the peer said "typing" recently: show it until then
 }
 
 /// A received text longer than this is dropped (memory / screen abuse).
@@ -113,6 +114,8 @@ static mut PING_OUTBOX: Vec<LingId> = Vec::new(); // peers to nudge with a /ping
 static mut LAST_PING_MS: u64 = 0; // sender-side rate limit for /ping
 const PING_COOLDOWN_MS: u64 = 60_000; // at most one ping per minute
 static mut NICK_OUTBOX: Vec<String> = Vec::new(); // new handle to broadcast to all peers
+static mut TYPING_OUTBOX: Vec<LingId> = Vec::new(); // peers to tell "typing..."
+static mut LAST_TYPING_MS: u64 = 0; // at most one typing notice every 3 s
 
 // Encrypted chat history, unlocked at login. CHAT_KEY is derived from the
 // account password (see `set_chat_key`, called from `ling_kernel_user_login`);
@@ -226,6 +229,75 @@ fn identity() -> &'static Identity {
     }
 }
 
+/// Is the identity usable now? Once it's been sealed (see `unlock_identity`),
+/// it can only be opened by signing in -- until then the messenger stays
+/// offline: no beacons, no handshakes, so nothing can be signed with it.
+fn identity_ready() -> bool {
+    unsafe {
+        if (*(&raw const IDENTITY)).is_some() {
+            return true;
+        }
+    }
+    !store_read("identity", "messenger_identity").map(|v| vault::is_vault(&v)).unwrap_or(false)
+}
+
+/// The identity seed's vault "passphrase": a 32-byte key the keyring derives
+/// for this purpose (from the account's master key, so it survives password
+/// changes, and exists only while the account is signed in).
+fn identity_vault_key() -> Option<[u8; 32]> {
+    crate::keyring::key("messenger-identity")
+}
+
+/// The key is already high-entropy (the keyring stretched the password), so
+/// the vault's own Argon2id runs at its lightest setting here.
+const IDENTITY_VAULT_COST: vault::Cost = vault::Cost { m_kib: 256, t: 1, lanes: 1 };
+
+/// At sign-in: open the sealed identity, or seal a plaintext one (an older
+/// install, or one created before anyone signed in) so the disk never holds
+/// the seed in the clear again. Also remembers the public LingId for display
+/// while locked.
+fn unlock_identity() {
+    let Some(key) = identity_vault_key() else { return };
+    let Some(stored) = store_read("identity", "messenger_identity") else {
+        // first run: make one, sealed from the start
+        let id = load_or_create_identity();
+        unsafe { *(&raw mut IDENTITY) = Some(id) };
+        return;
+    };
+    if vault::is_vault(&stored) {
+        match vault::unwrap_seed(&stored, &key) {
+            Some(seed) => {
+                let id = Identity::from_seed(seed);
+                remember_ling_id(&id);
+                unsafe { *(&raw mut IDENTITY) = Some(id) };
+            },
+            None => crate::console_write(b"messenger: the identity vault did not open with this account's key\n"),
+        }
+    } else if stored.len() == 32 {
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&stored);
+        if seal_seed(&seed, &key) {
+            crate::console_write(b"messenger: identity sealed under the account keyring\n");
+        }
+        let id = Identity::from_seed(seed);
+        remember_ling_id(&id);
+        unsafe { *(&raw mut IDENTITY) = Some(id) };
+    }
+}
+
+fn seal_seed(seed: &[u8; 32], key: &[u8; 32]) -> bool {
+    let (Some(salt), Some(nonce)) = (fresh_bytes::<{ vault::SALT_LEN }>(), fresh_bytes::<{ vault::NONCE_LEN }>()) else {
+        return false;
+    };
+    store_write("identity", "messenger_identity", &vault::wrap_seed(seed, key, salt, nonce, IDENTITY_VAULT_COST));
+    true
+}
+
+/// The public LingId, kept in the clear for the UI while the vault is shut.
+fn remember_ling_id(id: &Identity) {
+    store_write("identity_pub", "messenger_identity_pub", id.ling_id().0.as_bytes());
+}
+
 fn load_or_create_identity() -> Identity {
     if let Some(v) = store_read("identity", "messenger_identity") {
         if v.len() == 32 {
@@ -245,8 +317,15 @@ fn load_or_create_identity() -> Identity {
         seed = crate::crypto::sha256(&m);
         crate::console_write(b"messenger: no hardware RNG -- identity seeded from the clock\n");
     }
-    store_write("identity", "messenger_identity", &seed);
-    Identity::from_seed(seed)
+    // sealed straight away when the keyring is open; in the clear only until
+    // the first sign-in seals it (`unlock_identity`)
+    match identity_vault_key() {
+        Some(key) if seal_seed(&seed, &key) => {},
+        _ => store_write("identity", "messenger_identity", &seed),
+    }
+    let id = Identity::from_seed(seed);
+    remember_ling_id(&id);
+    id
 }
 
 fn roster() -> &'static mut Roster {
@@ -267,22 +346,11 @@ fn roster() -> &'static mut Roster {
 /// `verify` re-parses/validates the ML-DSA half, so a wrong length simply
 /// fails to authenticate later rather than needing a check here.
 fn pub_id_to_bytes(pi: &PublicIdentity) -> Vec<u8> {
-    let mut v = Vec::with_capacity(32 + pi.mldsa87.len());
-    v.extend_from_slice(pi.ed25519.as_bytes());
-    v.extend_from_slice(&pi.mldsa87);
-    v
+    pi.to_bytes()
 }
 
 fn pub_id_from_bytes(b: &[u8]) -> Option<PublicIdentity> {
-    // Ed25519 (32) + an ML-DSA-87 verifying key (2592); anything far off is
-    // garbage or an attempt to bloat the roster
-    if b.len() <= 32 || b.len() > 32 + 4096 {
-        return None;
-    }
-    let mut ed = [0u8; 32];
-    ed.copy_from_slice(&b[..32]);
-    let ed_vk = ed25519_dalek::VerifyingKey::from_bytes(&ed).ok()?;
-    Some(PublicIdentity { ed25519: ed_vk, mldsa87: b[32..].to_vec() })
+    PublicIdentity::from_bytes(b)
 }
 
 /// One friend per line: `hex(pub_identity)<TAB>handle`. A hybrid identity is
@@ -322,6 +390,7 @@ pub fn unlock_for_session(password: &[u8]) {
     let Some(key) = crate::keyring::key("messenger-chat") else { return };
     let user = crate::keyring::user().unwrap_or_default();
     switch_owner(&user);
+    unlock_identity();
     unsafe {
         CHAT_KEY = Some(key);
         HISTORY_BLOCKED = false;
@@ -592,6 +661,14 @@ fn fresh_bytes<const N: usize>() -> Option<[u8; N]> {
 }
 
 pub fn my_ling_id() -> LingId {
+    if !identity_ready() {
+        if let Some(b) = store_read("identity_pub", "messenger_identity_pub") {
+            if let Ok(s) = core::str::from_utf8(&b) {
+                return LingId(s.to_string());
+            }
+        }
+        return LingId("locked".into());
+    }
     identity().ling_id()
 }
 
@@ -679,6 +756,9 @@ pub fn clear_unread() {
 
 /// One round of the chat listener's work (what the background task loops on).
 fn task_step() {
+    if !identity_ready() {
+        return;
+    }
     {
         let now = timer::now_ms();
         if now.wrapping_sub(unsafe { LAST_BEACON_MS }) >= BEACON_INTERVAL_MS {
@@ -728,6 +808,11 @@ fn task_step() {
         let pings = unsafe { core::mem::take(&mut *&raw mut PING_OUTBOX) };
         for lid in pings {
             send_ping_to(&lid);
+        }
+        // Typing notices the UI queued.
+        let typing = unsafe { core::mem::take(&mut *&raw mut TYPING_OUTBOX) };
+        for lid in typing {
+            send_kind_to(&lid, wire::KIND_TYPING, &[]);
         }
         // Broadcast any nick changes the UI queued (to every open peer).
         let nicks = unsafe { core::mem::take(&mut *&raw mut NICK_OUTBOX) };
@@ -842,6 +927,7 @@ fn recv_all_conversations() {
                                 if msg.len() <= MAX_TEXT {
                                     if let Ok(text) = core::str::from_utf8(&msg) {
                                         convos[i].lines.push((false, text.to_string()));
+                                        convos[i].typing_until_ms = 0;
                                         remembered = Some((peer, false, text.to_string()));
                                         UNREAD = UNREAD.saturating_add(1);
                                     }
@@ -860,6 +946,9 @@ fn recv_all_conversations() {
                                     mixer::jingle(mixer::EVENT_PING);
                                     remembered = Some((peer, false, "*ping*".to_string()));
                                 }
+                            },
+                            wire::KIND_TYPING => {
+                                convos[i].typing_until_ms = timer::now_ms() + 4_500;
                             },
                             wire::KIND_NICK => {
                                 // Peer renamed themselves. Re-label them in the
@@ -959,7 +1048,7 @@ fn local_handle() -> String {
     if !user.is_empty() {
         return user.to_string();
     }
-    identity().ling_id().0
+    my_ling_id().0
 }
 
 /// Set and persist a custom display handle (shown to nearby peers in
@@ -1258,11 +1347,62 @@ fn open_conversation(peer: LingId, handle: usize, session: Session, rx: Vec<u8>,
             carried = Some(old.lines);
         }
         let lines = carried.unwrap_or_else(|| history_for(&peer));
-        convos.push(Conversation { peer, handle, rx, session, lines, since_ms: now, we_dialed, last_ping_ms: 0, dead: false });
+        convos.push(Conversation { peer, handle, rx, session, lines, since_ms: now, we_dialed, last_ping_ms: 0, dead: false, typing_until_ms: 0 });
     }
 }
 
 // -- Actions driven by the UI -----------------------------------------------
+
+/// Your own `lingmsg://` friend link: your handle, your public identity and,
+/// when the network is up, the address friends can dial.
+fn my_link() -> String {
+    let ip = netstack::self_ip();
+    let addr = if ip == [0, 0, 0, 0] { String::new() } else { alloc::format!("{}.{}.{}.{}:{}", ip[0], ip[1], ip[2], ip[3], MSG_TCP_PORT) };
+    link::encode(&local_handle(), &addr, &identity().public())
+}
+
+/// Add a friend from a `lingmsg://` link (trust is whoever sent you the link --
+/// compare the LingId shown, as for any new friend) and dial them if the link
+/// carries an address.
+fn add_from_link(text: &str) {
+    let Some(f) = link::decode(text) else {
+        unsafe { STATUS = "that isn't a valid lingmsg:// link (copy it whole and try /add again)" };
+        return;
+    };
+    if f.public_identity == identity().public() {
+        unsafe { STATUS = "that's your own link" };
+        return;
+    }
+    let lid = f.ling_id();
+    if roster().find_by_ling_id(&lid).is_none() {
+        let mut handle = f.handle.trim().to_string();
+        if handle.is_empty() || roster().friends.iter().any(|x| x.handle.eq_ignore_ascii_case(&handle)) {
+            handle = alloc::format!("{} {}", if handle.is_empty() { "friend" } else { handle.as_str() }, &lid.0[..lid.0.len().min(6)]);
+        }
+        roster().add(handle, f.public_identity.clone());
+        save_roster();
+    }
+    select_peer(&lid);
+    match parse_ipv4(&f.addr) {
+        Some(ip) => queue_connect(lid, ip),
+        None => unsafe { STATUS = "friend added - they'll connect when they're on your LAN" },
+    }
+}
+
+/// `a.b.c.d` or `a.b.c.d:port` (the port is always the chat port here).
+fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
+    let host = s.split(':').next()?;
+    let mut out = [0u8; 4];
+    let mut n = 0;
+    for part in host.split('.') {
+        if n == 4 {
+            return None;
+        }
+        out[n] = part.parse().ok()?;
+        n += 1;
+    }
+    if n == 4 { Some(out) } else { None }
+}
 
 /// Connect to a nearby peer (Enter on a `+handle` row). Connecting runs the
 /// TOFU identity exchange + hybrid handshake, which adds them to the roster on
@@ -1356,11 +1496,15 @@ fn run_command(cmd: &str, arg: &str) {
                 STATUS = "handle updated";
             }
         },
+        "link" => {
+            crate::drivers::clipboard::set_str(&my_link());
+            unsafe { STATUS = "your lingmsg:// friend link is on the clipboard - send it to a friend" };
+        },
+        "add" if arg.is_empty() || arg.starts_with(link::SCHEME) => {
+            let text = if arg.is_empty() { core::str::from_utf8(crate::drivers::clipboard::get()).unwrap_or("").to_string() } else { arg.to_string() };
+            add_from_link(&text);
+        },
         "add" => {
-            if arg.is_empty() {
-                unsafe { STATUS = "usage: /add <name>" };
-                return;
-            }
             // Match a nearby peer by handle and add + start chatting with them.
             let found = unsafe {
                 (&*&raw const NEARBY)
@@ -1380,7 +1524,7 @@ fn run_command(cmd: &str, arg: &str) {
             }
         },
         "ping" => send_ping(),
-        _ => unsafe { STATUS = "unknown command (try /nick /add /ping)" },
+        _ => unsafe { STATUS = "unknown command (try /nick /add /link /ping)" },
     }
 }
 
@@ -1443,6 +1587,34 @@ fn nick_in_use(name: &str) -> bool {
             .any(|p| p.ling_id != me && p.handle.eq_ignore_ascii_case(name))
     };
     nearby_hit || roster().handle_taken_by_other(name, &me)
+}
+
+/// Task-side: one sealed frame of `kind` to an open conversation, if there is one.
+fn send_kind_to(lid: &LingId, kind: u8, body: &[u8]) {
+    let send = unsafe {
+        let convos = &mut *&raw mut CONVERSATIONS;
+        convos.iter_mut().find(|c| &c.peer == lid && !c.dead).map(|c| (c.handle, wire::seal(&mut c.session, kind, body)))
+    };
+    if let Some((handle, frame)) = send {
+        let _ = send_framed(handle, &frame);
+    }
+}
+
+/// UI-side: the user is typing to the selected friend -- tell them (at most every 3 s).
+fn note_typing() {
+    let Some(sel) = (unsafe { SELECTED }) else { return };
+    let Some(lid) = roster().friends.get(sel).map(|f| f.ling_id.clone()) else { return };
+    let now = timer::now_ms();
+    unsafe {
+        if now.wrapping_sub(LAST_TYPING_MS) < 3_000 {
+            return;
+        }
+        if !(&*&raw const CONVERSATIONS).iter().any(|c| c.peer == lid && !c.dead) {
+            return;
+        }
+        LAST_TYPING_MS = now;
+        (&mut *&raw mut TYPING_OUTBOX).push(lid);
+    }
 }
 
 /// Task-side: broadcast our new handle to every open conversation (KIND_NICK).
@@ -1558,10 +1730,15 @@ pub fn key(k: u8) {
         0x08 => unsafe {
             COMPOSE_LEN = crate::drivers::ime::utf8_pop(&(&*&raw const COMPOSE)[..], COMPOSE_LEN);
         },
-        0x20..=0x7E => unsafe {
-            if COMPOSE_LEN < COMPOSE_MAX {
-                (&mut *&raw mut COMPOSE)[COMPOSE_LEN] = k;
-                COMPOSE_LEN += 1;
+        0x20..=0x7E => {
+            unsafe {
+                if COMPOSE_LEN < COMPOSE_MAX {
+                    (&mut *&raw mut COMPOSE)[COMPOSE_LEN] = k;
+                    COMPOSE_LEN += 1;
+                }
+            }
+            if k != b'/' && unsafe { (&*&raw const COMPOSE)[0] } != b'/' {
+                note_typing();
             }
         },
         _ => {},
@@ -1681,48 +1858,176 @@ pub fn me() -> (String, String) {
 // the left, a header + word-wrapped message stream + compose box on the right.
 // `wm.rs::window_click` mirrors SIDEBAR_W / LIST_TOP / ROW_H for the sidebar
 // hit-test -- keep those three in sync there.
+// -- Drawing ------------------------------------------------------------------
+//
+// Laid out like Discord -- a rail of friend tiles, a conversations column with
+// your own panel at the foot, the chat (grouped by sender, a typing line, the
+// composer), and a profile panel when the window is wide -- and skinned like
+// LingStationX: square corners, hairline outlines, 45-degree hatching and
+// corner brackets on what's selected, uppercase tile lettering for headings,
+// and its palette (ROYGBIV for people, blue for "selected / primary", green for
+// "on", red for danger).
+
 #[cfg(target_arch = "x86_64")]
-const SIDEBAR_W: u32 = 190;
+mod skin {
+    pub const BG: u32 = 0x1B_1B_1B; // C_BG_PANEL
+    pub const SIDE: u32 = 0x16_17_1A; // C_BG_SIDE
+    pub const DEEP: u32 = 0x0A_0A_0A; // C_BG_DEEP
+    pub const LINE: u32 = 0x3C_3C_3C; // C_LINE
+    pub const LINE_SOFT: u32 = 0x2A_2C_32; // C_LINE_SOFT
+    pub const TEXT: u32 = 0xCD_D0_D8; // C_TEXT
+    pub const DIM: u32 = 0x8C_90_98; // C_TEXT_DIM
+    pub const STRONG: u32 = 0xF5_F5_F5; // C_TEXT_STRONG
+    pub const SEL_ROW: u32 = 0x26_34_4C; // C_SEL_ROW
+    pub const BLUE: u32 = 0x3B_AA_EB; // C_BLUE: primary / selected
+    pub const GREEN: u32 = 0x45_C8_70; // C_GREEN: on / online
+    pub const RED: u32 = 0xED_4A_37; // C_RED
+    pub const ROYGBIV: [u32; 7] = [0xED_4A_37, 0xF7_94_1E, 0xF7_D8_46, 0x45_C8_70, 0x3B_AA_EB, 0x4A_64_D8, 0x9A_53_D6];
+}
+
 #[cfg(target_arch = "x86_64")]
-const ROW_H: u32 = 40; // avatar row height in the sidebar
+const RAIL_W: u32 = 56;
 #[cfg(target_arch = "x86_64")]
-const LIST_TOP: u32 = 34; // sidebar list starts below the "DIRECT MESSAGES" header
+const SIDEBAR_W: u32 = 208;
 #[cfg(target_arch = "x86_64")]
-const HEADER_H: u32 = 40; // chat-pane header height
+const SIDE_HDR_H: u32 = 34; // the "DIRECT MESSAGES" header bar
+#[cfg(target_arch = "x86_64")]
+const SECTION_H: u32 = 20; // a "FRIENDS - 3" label row
+#[cfg(target_arch = "x86_64")]
+const ROW_H: u32 = 40; // a conversation row
+#[cfg(target_arch = "x86_64")]
+const SELF_H: u32 = 46; // your panel at the foot of the column
+#[cfg(target_arch = "x86_64")]
+const HEADER_H: u32 = 40; // the chat header
+#[cfg(target_arch = "x86_64")]
+const PROFILE_W: u32 = 220; // the right-hand profile panel (wide windows)
 #[cfg(target_arch = "x86_64")]
 const LINE_H: u32 = 12; // one text line (8px glyph + 4px leading)
-#[cfg(target_arch = "x86_64")]
-const ONLINE_DOT: u32 = 0x3B_A5_5D; // Discord-ish presence green
 
-/// A deterministic avatar color for `seed` (a handle), from a small palette --
-/// the same handle always gets the same color, like Discord's default avatars.
+/// Mix `a` toward `b` by `t`/256.
 #[cfg(target_arch = "x86_64")]
-fn avatar_color(seed: &[u8]) -> u32 {
-    const PAL: [u32; 6] = [0x58_65_F2, 0x3B_A5_5D, 0xFA_A6_1A, 0xED_42_45, 0x9B_59_B6, 0x1A_BC_9C];
+fn mix(a: u32, b: u32, t: u32) -> u32 {
+    let ch = |s: u32| -> u32 {
+        let x = (a >> s) & 255;
+        let y = (b >> s) & 255;
+        ((x * (256 - t) + y * t) >> 8) & 255
+    };
+    (ch(16) << 16) | (ch(8) << 8) | ch(0)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn outline(x: u32, y: u32, w: u32, h: u32, c: u32) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    framebuffer::back_fill_rect(x, y, w, 1, c);
+    framebuffer::back_fill_rect(x, y + h - 1, w, 1, c);
+    framebuffer::back_fill_rect(x, y, 1, h, c);
+    framebuffer::back_fill_rect(x + w - 1, y, 1, h, c);
+}
+
+/// 45-degree hatching (LingStationX's `ds_hatch`): 1px lines every `sp` px,
+/// `col` mixed into `bg` by `a`/256.
+#[cfg(target_arch = "x86_64")]
+fn hatch(x: u32, y: u32, w: u32, h: u32, bg: u32, col: u32, sp: u32, a: u32) {
+    let c = mix(bg, col, a);
+    for yy in 0..h {
+        let mut xx = (sp - (yy % sp)) % sp;
+        while xx < w {
+            framebuffer::back_set_pixel(x + xx, y + yy, c);
+            xx += sp;
+        }
+    }
+}
+
+/// Corner brackets (`ds_brackets`): an L of `n` px at each corner.
+#[cfg(target_arch = "x86_64")]
+fn brackets(x: u32, y: u32, w: u32, h: u32, n: u32, c: u32) {
+    if w < 2 || h < 2 {
+        return;
+    }
+    let n = n.min(w / 2).min(h / 2);
+    let (r, b) = (x + w - 1, y + h - 1);
+    framebuffer::back_fill_rect(x, y, n, 1, c);
+    framebuffer::back_fill_rect(x, y, 1, n, c);
+    framebuffer::back_fill_rect(r + 1 - n, y, n, 1, c);
+    framebuffer::back_fill_rect(r, y, 1, n, c);
+    framebuffer::back_fill_rect(x, b, n, 1, c);
+    framebuffer::back_fill_rect(x, b + 1 - n, 1, n, c);
+    framebuffer::back_fill_rect(r + 1 - n, b, n, 1, c);
+    framebuffer::back_fill_rect(r, b + 1 - n, 1, n, c);
+}
+
+/// Uppercase tile lettering (`ds_word`): each letter in its own outlined square.
+#[cfg(target_arch = "x86_64")]
+fn tile_word(x: u32, y: u32, s: &str, col: u32, bg: u32) -> u32 {
+    let mut cx = x;
+    for b in s.bytes() {
+        if b == b' ' {
+            cx += 6;
+            continue;
+        }
+        outline(cx, y, 12, 12, mix(bg, col, 110));
+        font8x8::draw_char(cx + 2, y + 2, b.to_ascii_uppercase(), col, bg);
+        cx += 13;
+    }
+    cx
+}
+
+/// Plain text cut to `max_w` px (8 px a character, at a character boundary).
+#[cfg(target_arch = "x86_64")]
+fn text_fit(x: u32, y: u32, s: &str, max_w: u32, fg: u32, bg: u32) {
+    let maxch = (max_w / 8) as usize;
+    let b = s.as_bytes();
+    if b.len() <= maxch {
+        font8x8::draw_str(x, y, b, fg, bg);
+    } else if maxch > 2 {
+        let mut end = maxch - 2;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        font8x8::draw_str(x, y, &b[..end], fg, bg);
+        font8x8::draw_str(x + end as u32 * 8, y, b"..", fg, bg);
+    }
+}
+
+/// A person's colour: their handle hashed into the ROYGBIV palette.
+#[cfg(target_arch = "x86_64")]
+fn person_color(seed: &[u8]) -> u32 {
     let mut hsh: u32 = 2166136261;
     for &b in seed {
         hsh = (hsh ^ b as u32).wrapping_mul(16777619);
     }
-    PAL[(hsh as usize) % PAL.len()]
+    skin::ROYGBIV[(hsh as usize) % skin::ROYGBIV.len()]
 }
 
-/// Draw a round default avatar: a color-hashed disc with the handle's first
-/// letter centered. `scale` is the glyph scale (1 = 8px, 2 = 16px).
+/// A square avatar: the person's colour, hatched, outlined, their initial.
 #[cfg(target_arch = "x86_64")]
-fn draw_avatar(cx: u32, cy: u32, r: u32, scale: u32, name: &[u8]) {
-    let initial = name
-        .iter()
-        .copied()
-        .find(|c| c.is_ascii_alphanumeric())
-        .unwrap_or(b'?')
-        .to_ascii_uppercase();
-    let col = avatar_color(name);
-    framebuffer::back_fill_circle(cx, cy, r, col);
+fn draw_avatar(x: u32, y: u32, size: u32, name: &[u8], bg: u32) {
+    let col = person_color(name);
+    let fill = mix(bg, col, 70);
+    framebuffer::back_fill_rect(x, y, size, size, fill);
+    hatch(x + 1, y + 1, size - 2, size - 2, fill, col, 4, 90);
+    outline(x, y, size, size, col);
+    let initial = name.iter().copied().find(|c| c.is_ascii_alphanumeric()).unwrap_or(b'?').to_ascii_uppercase();
+    let scale = if size >= 28 { 2 } else { 1 };
     let g = 4 * scale;
-    font8x8::draw_char_scaled(cx - g, cy - g, initial, 0xFF_FF_FF, col, scale);
+    framebuffer::back_fill_rect(x + size / 2 - g - 1, y + size / 2 - g - 1, 2 * g + 2, 2 * g + 2, fill);
+    font8x8::draw_char_scaled(x + size / 2 - g, y + size / 2 - g, initial, skin::STRONG, fill, scale);
 }
 
-/// Strip the leading presence marker (`*`/`+`/space) a sidebar label carries.
+/// A presence pip at a corner of an avatar.
+#[cfg(target_arch = "x86_64")]
+fn presence(x: u32, y: u32, online: bool, bg: u32) {
+    framebuffer::back_fill_rect(x, y, 8, 8, bg);
+    if online {
+        framebuffer::back_fill_rect(x + 1, y + 1, 6, 6, skin::GREEN);
+    } else {
+        outline(x + 1, y + 1, 6, 6, skin::DIM);
+    }
+}
+
+/// Strip the leading presence marker (`*`/`+`/space) a row label carries.
 fn strip_marker(label: &str) -> &str {
     match label.as_bytes().first() {
         Some(b'*') | Some(b'+') | Some(b' ') => &label[1..],
@@ -1804,155 +2109,420 @@ fn wrapped_line_count(s: &str, max_w: u32) -> usize {
     lines.max(1)
 }
 
+/// A system line (a ping, a rename) rather than something someone typed.
+fn is_system_line(s: &str) -> bool {
+    s == "*ping*" || (s.starts_with("* ") && s.ends_with(" *"))
+}
+
+/// Where each conversation row sits in the column: `(row index, y offset from
+/// the column top)`, friends under a FRIENDS label, nearby peers under NEARBY.
 #[cfg(target_arch = "x86_64")]
-pub fn draw(x: u32, y: u32, w: u32, h: u32) {
-    tick();
-    clear_unread();
-    let bg = theme::color(theme::SLOT_BG);
-    let panel = theme::color(theme::SLOT_PANEL);
-    let border = theme::color(theme::SLOT_PANEL_BORDER);
-    let text = theme::color(theme::SLOT_TEXT);
-    let dim = theme::color(theme::SLOT_DIM);
-    let accent = theme::color(theme::SLOT_ACCENT);
-
-    framebuffer::back_fill_rect(x, y, w, h, panel);
-
-    // ---- Sidebar: conversations with round avatars ----
-    framebuffer::back_fill_rect(x, y, SIDEBAR_W, h, bg);
-    framebuffer::back_fill_rect(x + SIDEBAR_W, y, 1, h, border);
-    font8x8::draw_str(x + 12, y + 12, b"DIRECT MESSAGES", dim, bg);
-
-    // Bottom strip is the "you" panel (below), so stop the list above it.
-    let self_h = 34u32;
-    let list_bottom = (y + h).saturating_sub(self_h);
-    let rows = selectable_rows();
-    let sel = unsafe { SELECTED };
-    for (i, (_is_friend, _idx, label)) in rows.iter().enumerate() {
-        let ry = y + LIST_TOP + i as u32 * ROW_H;
-        if ry + ROW_H > list_bottom {
-            break;
-        }
-        let online = label.starts_with('*');
-        let selected = sel == Some(i);
-        let row_bg = if selected { border } else { bg };
-        if selected {
-            framebuffer::back_fill_rounded_rect(x + 4, ry + 3, SIDEBAR_W - 8, ROW_H - 6, 6, border);
-        }
-        let name = strip_marker(label);
-        let acx = x + 24;
-        let acy = ry + ROW_H / 2;
-        draw_avatar(acx, acy, 13, 2, name.as_bytes());
-        if online {
-            framebuffer::back_fill_circle(acx + 10, acy + 10, 4, row_bg);
-            framebuffer::back_fill_circle(acx + 10, acy + 10, 3, ONLINE_DOT);
-        }
-        let maxch = ((SIDEBAR_W - 48) / 8) as usize;
-        let nb = name.as_bytes();
-        font8x8::draw_str(
-            x + 44,
-            ry + ROW_H / 2 - 4,
-            &nb[..nb.len().min(maxch)],
-            if selected { text } else { dim },
-            row_bg,
-        );
+fn row_layout(rows: &[(bool, usize, String)]) -> Vec<(usize, u32)> {
+    let mut out = Vec::new();
+    let mut y = SIDE_HDR_H + 6;
+    let friends = rows.iter().filter(|r| r.0).count();
+    if friends > 0 {
+        y += SECTION_H;
     }
-
-    // ---- "You" panel (bottom-left, like Discord's user area): shows your own
-    // avatar + current handle, so `/nick` changes are visible at a glance. ----
-    let me_name = local_handle();
-    let sp_y = (y + h).saturating_sub(self_h);
-    framebuffer::back_fill_rect(x, sp_y, SIDEBAR_W, self_h, border);
-    draw_avatar(x + 20, sp_y + self_h / 2, 11, 2, me_name.as_bytes());
-    let me_max = ((SIDEBAR_W - 44) / 8) as usize;
-    let mnb = me_name.as_bytes();
-    font8x8::draw_str(x + 38, sp_y + self_h / 2 - 8, &mnb[..mnb.len().min(me_max)], text, border);
-    font8x8::draw_str(x + 38, sp_y + self_h / 2 + 2, b"you", dim, border);
-
-    // ---- Chat pane ----
-    let px = x + SIDEBAR_W + 1;
-    let pw = w.saturating_sub(SIDEBAR_W + 1);
-
-    // Header: selected peer's avatar + handle + status.
-    framebuffer::back_fill_rect(px, y + HEADER_H, pw, 1, border);
-    match sel {
-        Some(s) if s < roster().friends.len() => {
-            let fname = roster().friends[s].handle.clone();
-            draw_avatar(px + 22, y + HEADER_H / 2, 12, 2, fname.as_bytes());
-            font8x8::draw_str(px + 42, y + 10, fname.as_bytes(), text, panel);
-            font8x8::draw_str(px + 42, y + 24, status().as_bytes(), dim, panel);
-        },
-        _ => {
-            font8x8::draw_str(px + 16, y + HEADER_H / 2 - 4, b"Select a conversation to start chatting", dim, panel);
-        },
+    let mut nearby_started = false;
+    for (i, r) in rows.iter().enumerate() {
+        if !r.0 && !nearby_started {
+            nearby_started = true;
+            y += 6 + SECTION_H;
+        }
+        out.push((i, y));
+        y += ROW_H;
     }
+    out
+}
 
-    // Message stream (word-wrapped, newest-anchored) + compose box.
-    let compose_h = 30u32;
-    let msg_x = px + 14;
-    let msg_top = y + HEADER_H + 10;
-    let msg_w = pw.saturating_sub(28);
-    let msg_bottom = (y + h).saturating_sub(compose_h + 8);
-
-    if let Some(s) = sel {
-        if s < roster().friends.len() {
-            let friend_lid = roster().friends[s].ling_id.clone();
-            let friend_name = roster().friends[s].handle.clone();
-            let me_name = local_handle();
-            // Prefer the live conversation; otherwise fall back to the saved
-            // (password-decrypted) history so past messages still show when the
-            // peer is offline -- e.g. right after a reboot + sign-in.
-            let lines = match unsafe {
-                (&*&raw const CONVERSATIONS).iter().find(|c| c.peer == friend_lid)
-            } {
-                Some(convo) => convo.lines.clone(),
-                None => history_for(&friend_lid),
-            };
-            if lines.is_empty() {
-                font8x8::draw_str(msg_x, msg_top, b"Not connected -- press Enter to start a chat.", dim, panel);
-            } else {
-                // Anchor to the newest: count from the end until the window fills.
-                let avail = ((msg_bottom.saturating_sub(msg_top)) / LINE_H) as usize;
-                let body_w = msg_w.saturating_sub(26);
-                let mut used = 0usize;
-                let mut start = 0usize;
-                for (i, (_, line)) in lines.iter().enumerate().rev() {
-                    used += 1 + wrapped_line_count(line, body_w) + 1; // name + body + gap
-                    if used > avail {
-                        start = i + 1;
-                        break;
-                    }
-                }
-                let mut yy = msg_top;
-                for (from_me, line) in lines[start..].iter() {
-                    if yy + 8 > msg_bottom {
-                        break;
-                    }
-                    let who = if *from_me { me_name.as_bytes() } else { friend_name.as_bytes() };
-                    draw_avatar(msg_x + 9, yy + 8, 9, 1, who);
-                    font8x8::draw_str(msg_x + 26, yy, who, accent, panel);
-                    yy += LINE_H;
-                    yy = draw_wrapped(msg_x + 26, yy, body_w, msg_bottom, line, text, panel);
-                    yy += 6;
+/// A click in the Messenger window, relative to the content's top-left (the
+/// same origin `draw` gets). Rail tiles and conversation rows select.
+pub fn click(rel_x: i64, rel_y: i64) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if rel_x < 0 || rel_y < 0 {
+            return;
+        }
+        let (rx, ry) = (rel_x as u32, rel_y as u32);
+        let rows = selectable_rows();
+        if rx < RAIL_W {
+            // the rail: home at the top, then one tile per friend
+            if ry < 52 {
+                unsafe { SELECTED = None };
+                return;
+            }
+            let i = ((ry - 60) / 44) as usize;
+            if (ry - 60) % 44 < 36 && i < roster().friends.len() {
+                click_row(i);
+            }
+            return;
+        }
+        if rx < RAIL_W + SIDEBAR_W {
+            for (i, top) in row_layout(&rows) {
+                if ry >= top && ry < top + ROW_H {
+                    click_row(i);
+                    return;
                 }
             }
         }
     }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = (rel_x, rel_y);
+}
 
-    // Compose box: rounded input, placeholder when empty.
-    let cbx = px + 12;
-    let cby = (y + h).saturating_sub(compose_h);
-    let cbw = pw.saturating_sub(24);
-    framebuffer::back_fill_rounded_rect(cbx, cby, cbw, compose_h - 6, 8, bg);
-    let inner_w = ((cbw.saturating_sub(16)) / 8) as usize;
+/// The last thing said in a conversation, for the row's preview line.
+#[cfg(target_arch = "x86_64")]
+fn last_line(lid: &LingId) -> Option<(bool, String)> {
+    let live = unsafe { (&*&raw const CONVERSATIONS).iter().find(|c| &c.peer == lid).and_then(|c| c.lines.last().cloned()) };
+    live.or_else(|| history_for(lid).last().cloned())
+}
+
+#[cfg(target_arch = "x86_64")]
+pub fn draw(x: u32, y: u32, w: u32, h: u32) {
+    use skin::*;
+    tick();
+    clear_unread();
+    let now = timer::now_ms();
+    framebuffer::back_fill_rect(x, y, w, h, BG);
+    let rows = selectable_rows();
+    let sel = unsafe { SELECTED };
+    let me_name = local_handle();
+    let my_id = my_ling_id();
+    let n_friends = roster().friends.len();
+
+    // ---- the rail ----
+    framebuffer::back_fill_rect(x, y, RAIL_W, h, DEEP);
+    framebuffer::back_fill_rect(x + RAIL_W - 1, y, 1, h, LINE_SOFT);
+    {
+        // home: the direct-messages view
+        let (tx, ty) = (x + 10, y + 10);
+        let home = sel.is_none();
+        framebuffer::back_fill_rect(tx, ty, 36, 36, mix(DEEP, BLUE, 60));
+        hatch(tx + 1, ty + 1, 34, 34, mix(DEEP, BLUE, 60), BLUE, 4, if home { 150 } else { 70 });
+        outline(tx, ty, 36, 36, BLUE);
+        if home {
+            brackets(tx - 4, ty - 4, 44, 44, 6, BLUE);
+        }
+        framebuffer::back_fill_rect(tx + 9, ty + 13, 18, 10, mix(DEEP, BLUE, 60));
+        font8x8::draw_str(tx + 10, ty + 14, b"LM", STRONG, mix(DEEP, BLUE, 60));
+        framebuffer::back_fill_rect(x + 14, y + 54, RAIL_W - 28, 1, LINE);
+        // one tile per friend
+        let mut ty = y + 60;
+        for (i, f) in roster().friends.iter().enumerate() {
+            if ty + 36 > (y + h).saturating_sub(48) {
+                break;
+            }
+            let online = unsafe { (&*&raw const NEARBY).iter().any(|p| p.ling_id == f.ling_id) };
+            draw_avatar(x + 10, ty, 36, f.handle.as_bytes(), DEEP);
+            presence(x + 38, ty + 28, online, DEEP);
+            if sel == Some(i) {
+                framebuffer::back_fill_rect(x, ty + 4, 3, 28, STRONG);
+                brackets(x + 6, ty - 4, 44, 44, 6, BLUE);
+            }
+            ty += 44;
+        }
+        // add a friend: the "+" tile (the hint says how)
+        let ay = (y + h).saturating_sub(46);
+        outline(x + 10, ay, 36, 36, GREEN);
+        hatch(x + 11, ay + 1, 34, 34, DEEP, GREEN, 5, 60);
+        framebuffer::back_fill_rect(x + 23, ay + 13, 10, 10, DEEP);
+        font8x8::draw_char(x + 24, ay + 14, b'+', GREEN, DEEP);
+    }
+
+    // ---- the conversations column ----
+    let sx = x + RAIL_W;
+    framebuffer::back_fill_rect(sx, y, SIDEBAR_W, h, SIDE);
+    framebuffer::back_fill_rect(sx + SIDEBAR_W - 1, y, 1, h, LINE_SOFT);
+    framebuffer::back_fill_rect(sx, y + SIDE_HDR_H - 1, SIDEBAR_W, 1, LINE);
+    tile_word(sx + 12, y + 11, "DIRECT MESSAGES", TEXT, SIDE);
+    let list_bottom = (y + h).saturating_sub(SELF_H);
+    let n_near = rows.len() - n_friends.min(rows.len());
+    let layout = row_layout(&rows);
+    if n_friends > 0 {
+        let ly = y + SIDE_HDR_H + 6;
+        font8x8::draw_str(sx + 12, ly + 6, alloc::format!("FRIENDS - {n_friends}").as_bytes(), DIM, SIDE);
+    }
+    if n_near > 0 {
+        if let Some(&(_, top)) = layout.iter().find(|(i, _)| !rows[*i].0) {
+            let ly = y + top - SECTION_H;
+            if ly + 14 < list_bottom {
+                font8x8::draw_str(sx + 12, ly + 6, alloc::format!("NEARBY - {n_near}").as_bytes(), DIM, SIDE);
+            }
+        }
+    }
+    if rows.is_empty() {
+        let ly = y + SIDE_HDR_H + 16;
+        font8x8::draw_str(sx + 12, ly, b"no one here yet", DIM, SIDE);
+        font8x8::draw_str(sx + 12, ly + 14, b"peers on this LAN show", DIM, SIDE);
+        font8x8::draw_str(sx + 12, ly + 26, b"up under NEARBY; or /add", DIM, SIDE);
+        font8x8::draw_str(sx + 12, ly + 38, b"a lingmsg:// link", DIM, SIDE);
+    }
+    for (i, top) in &layout {
+        let (is_friend, idx, label) = &rows[*i];
+        let ry = y + top;
+        if ry + ROW_H > list_bottom {
+            break;
+        }
+        let selected = sel == Some(*i);
+        let rbg = if selected { SEL_ROW } else { SIDE };
+        if selected {
+            framebuffer::back_fill_rect(sx + 6, ry + 2, SIDEBAR_W - 12, ROW_H - 4, SEL_ROW);
+            hatch(sx + 7, ry + 3, SIDEBAR_W - 14, ROW_H - 6, SEL_ROW, BLUE, 5, 40);
+            outline(sx + 6, ry + 2, SIDEBAR_W - 12, ROW_H - 4, mix(SEL_ROW, BLUE, 150));
+            brackets(sx + 6, ry + 2, SIDEBAR_W - 12, ROW_H - 4, 5, BLUE);
+        }
+        let name = strip_marker(label);
+        let online = label.starts_with('*') || !*is_friend;
+        draw_avatar(sx + 14, ry + 8, 24, name.as_bytes(), rbg);
+        presence(sx + 33, ry + 27, online, rbg);
+        text_fit(sx + 46, ry + 9, name, SIDEBAR_W - 56, if selected { STRONG } else { TEXT }, rbg);
+        // the second line: the last thing said, or how they're reachable
+        let sub: String = if *is_friend {
+            match roster().friends.get(*idx).and_then(|f| last_line(&f.ling_id)) {
+                Some((mine, t)) if !is_system_line(&t) => if mine { alloc::format!("you: {t}") } else { t },
+                _ => String::from(if online { "online" } else { "offline" }),
+            }
+        } else {
+            String::from("on your LAN - Enter adds")
+        };
+        let sub_col = if !*is_friend { GREEN } else { DIM };
+        text_fit(sx + 46, ry + 22, &sub, SIDEBAR_W - 56, sub_col, rbg);
+    }
+
+    // ---- you, at the foot of the column ----
+    {
+        let py = (y + h).saturating_sub(SELF_H);
+        framebuffer::back_fill_rect(sx, py, SIDEBAR_W - 1, SELF_H, DEEP);
+        framebuffer::back_fill_rect(sx, py, SIDEBAR_W - 1, 1, LINE);
+        draw_avatar(sx + 10, py + 9, 28, me_name.as_bytes(), DEEP);
+        presence(sx + 31, py + 30, identity_ready(), DEEP);
+        text_fit(sx + 46, py + 10, &me_name, SIDEBAR_W - 56, STRONG, DEEP);
+        let short = &my_id.0[..my_id.0.len().min(12)];
+        font8x8::draw_str(sx + 46, py + 24, short.as_bytes(), DIM, DEEP);
+        outline(sx + SIDEBAR_W - 46, py + 11, 34, 24, LINE);
+        font8x8::draw_str(sx + SIDEBAR_W - 41, py + 19, b"/lnk", BLUE, DEEP);
+    }
+
+    // ---- the chat ----
+    let cx = sx + SIDEBAR_W;
+    let total_w = w.saturating_sub(RAIL_W + SIDEBAR_W);
+    let show_profile = total_w >= 640;
+    let cw = if show_profile { total_w - PROFILE_W } else { total_w };
+    let friend = match sel {
+        Some(s) if s < n_friends => Some(s),
+        _ => None,
+    };
+
+    // header
+    framebuffer::back_fill_rect(cx, y + HEADER_H - 1, cw, 1, LINE);
+    let typing_name: Option<String>;
+    match friend {
+        Some(s) => {
+            let f = &roster().friends[s];
+            let online = unsafe { (&*&raw const NEARBY).iter().any(|p| p.ling_id == f.ling_id) };
+            let live = unsafe { (&*&raw const CONVERSATIONS).iter().any(|c| c.peer == f.ling_id && !c.dead) };
+            font8x8::draw_str(cx + 14, y + 16, b"@", DIM, BG);
+            text_fit(cx + 28, y + 16, &f.handle, cw / 3, STRONG, BG);
+            let after = cx + 28 + (f.handle.len().min((cw / 3 / 8) as usize) as u32) * 8 + 12;
+            framebuffer::back_fill_rect(after, y + 12, 1, 16, LINE);
+            let state = if live { "connected - end-to-end encrypted" } else if online { "online - press Enter to connect" } else { "offline" };
+            text_fit(after + 10, y + 16, state, cw.saturating_sub(after - cx + 24), if live { GREEN } else { DIM }, BG);
+            typing_name = unsafe {
+                (&*&raw const CONVERSATIONS).iter().find(|c| c.peer == f.ling_id && c.typing_until_ms > now).map(|_| f.handle.clone())
+            };
+        },
+        None => {
+            tile_word(cx + 14, y + 14, "LING MESSENGER", TEXT, BG);
+            typing_name = None;
+        },
+    }
+
+    // the composer, at the foot
+    let comp_h = 36u32;
+    let comp_y = (y + h).saturating_sub(comp_h + 14);
+    let comp_x = cx + 14;
+    let comp_w = cw.saturating_sub(28);
+    framebuffer::back_fill_rect(comp_x, comp_y, comp_w, comp_h, DEEP);
+    outline(comp_x, comp_y, comp_w, comp_h, LINE);
+    brackets(comp_x, comp_y, comp_w, comp_h, 6, if friend.is_some() { BLUE } else { LINE });
+    framebuffer::back_fill_rect(comp_x + 10, comp_y + 9, 18, 18, mix(DEEP, GREEN, 50));
+    outline(comp_x + 10, comp_y + 9, 18, 18, GREEN);
+    font8x8::draw_char(comp_x + 15, comp_y + 14, b'+', GREEN, mix(DEEP, GREEN, 50));
+    let inner_x = comp_x + 38;
+    let inner_w = comp_w.saturating_sub(52);
     let buf = unsafe { &(&*&raw const COMPOSE)[..COMPOSE_LEN] };
     if buf.is_empty() {
-        let hint: &[u8] = match sel {
-            Some(s) if s < roster().friends.len() => b"Message...   /ping  /nick <name>",
-            _ => b"/nick <name>  /add <name>  -- or arrows + Enter to add a peer",
+        let hint = match friend {
+            Some(s) => alloc::format!("Message @{}   /ping  /nick  /link", roster().friends[s].handle),
+            None => String::from("/nick <name>   /add <name | lingmsg:// link>   /link"),
         };
-        font8x8::draw_str(cbx + 8, cby + 8, &hint[..hint.len().min(inner_w)], dim, bg);
+        text_fit(inner_x, comp_y + 14, &hint, inner_w, DIM, DEEP);
     } else {
-        let shown = buf.len().min(inner_w);
-        font8x8::draw_str(cbx + 8, cby + 8, &buf[buf.len() - shown..], text, bg);
+        let maxch = (inner_w / 8) as usize;
+        let shown = buf.len().min(maxch.saturating_sub(1));
+        font8x8::draw_str(inner_x, comp_y + 14, &buf[buf.len() - shown..], STRONG, DEEP);
+        if (now / 500) % 2 == 0 {
+            framebuffer::back_fill_rect(inner_x + shown as u32 * 8 + 1, comp_y + 12, 2, 12, BLUE);
+        }
+    }
+    // the typing line just above it
+    let typing_y = comp_y.saturating_sub(16);
+    if let Some(n) = &typing_name {
+        let dots = [b".  ", b".. ", b"..."][((now / 400) % 3) as usize];
+        let mut s = alloc::format!("{n} is typing");
+        s.push_str(core::str::from_utf8(dots).unwrap_or(""));
+        text_fit(cx + 16, typing_y, &s, cw.saturating_sub(32), BLUE, BG);
+    }
+
+    // the messages: grouped by sender, newest at the bottom
+    let msg_top = y + HEADER_H + 10;
+    let msg_bottom = typing_y.saturating_sub(6);
+    let msg_x = cx + 16;
+    let body_x = msg_x + 40;
+    let body_w = cw.saturating_sub(40 + 40);
+    match friend {
+        Some(s) => {
+            let f_lid = roster().friends[s].ling_id.clone();
+            let f_name = roster().friends[s].handle.clone();
+            let lines = match unsafe { (&*&raw const CONVERSATIONS).iter().find(|c| c.peer == f_lid) } {
+                Some(c) => c.lines.clone(),
+                None => history_for(&f_lid),
+            };
+            if lines.is_empty() {
+                // the start of the conversation, Discord-style
+                draw_avatar(msg_x, msg_top + 8, 56, f_name.as_bytes(), BG);
+                font8x8::draw_char_scaled(msg_x, msg_top + 76, b'@', STRONG, BG, 2);
+                text_fit(msg_x + 18, msg_top + 80, &f_name, cw.saturating_sub(60), STRONG, BG);
+                font8x8::draw_str(msg_x, msg_top + 104, b"This is the beginning of your direct messages.", DIM, BG);
+                font8x8::draw_str(msg_x, msg_top + 118, b"Press Enter with an empty message to connect.", DIM, BG);
+            } else {
+                // the height of each line as drawn (a header row when the sender changes)
+                let avail = msg_bottom.saturating_sub(msg_top);
+                let mut need = 0u32;
+                let mut start = 0usize;
+                for i in (0..lines.len()).rev() {
+                    let (mine, t) = &lines[i];
+                    let head = i == 0 || lines[i - 1].0 != *mine || is_system_line(&lines[i - 1].1) || is_system_line(t);
+                    let hgt = if is_system_line(t) { LINE_H + 8 } else { wrapped_line_count(t, body_w) as u32 * LINE_H + if head { LINE_H + 10 } else { 2 } };
+                    if need + hgt > avail {
+                        start = i + 1;
+                        break;
+                    }
+                    need += hgt;
+                }
+                let mut yy = msg_top + avail.saturating_sub(need);
+                for i in start..lines.len() {
+                    let (mine, t) = &lines[i];
+                    if is_system_line(t) {
+                        // a ping or a rename: a quiet centred note between hairlines
+                        let mid = yy + 6;
+                        framebuffer::back_fill_rect(msg_x, mid + 3, cw.saturating_sub(32), 1, LINE_SOFT);
+                        let label = if t == "*ping*" { String::from("pinged you") } else { t.trim_matches('*').trim().to_string() };
+                        let tw = (label.len() as u32 * 8 + 16).min(cw.saturating_sub(40));
+                        let lx = cx + (cw - tw) / 2;
+                        framebuffer::back_fill_rect(lx, mid - 2, tw, 12, BG);
+                        text_fit(lx + 8, mid, &label, tw - 8, if t == "*ping*" { RED } else { DIM }, BG);
+                        yy += LINE_H + 8;
+                        continue;
+                    }
+                    let head = i == 0 || lines[i - 1].0 != *mine || is_system_line(&lines[i - 1].1);
+                    let who = if *mine { me_name.as_str() } else { f_name.as_str() };
+                    if head {
+                        yy += 8;
+                        draw_avatar(msg_x, yy, 28, who.as_bytes(), BG);
+                        let ncol = if *mine { BLUE } else { person_color(who.as_bytes()) };
+                        text_fit(body_x, yy + 1, who, body_w, ncol, BG);
+                        yy += LINE_H + 2;
+                    }
+                    yy = draw_wrapped(body_x, yy, body_w, msg_bottom + LINE_H, t, TEXT, BG);
+                    yy += 2;
+                }
+            }
+        },
+        None => {
+            // nothing selected: a framed welcome card with your identity and the commands
+            let fw = cw.saturating_sub(60).min(520);
+            let fx = cx + (cw - fw) / 2;
+            let fy = msg_top + 20;
+            let fh = 190u32;
+            outline(fx, fy, fw, fh, LINE);
+            outline(fx + 3, fy + 3, fw - 6, fh - 6, LINE_SOFT);
+            brackets(fx, fy, fw, fh, 10, BLUE);
+            framebuffer::back_fill_rect(fx + 16, fy - 7, 13 * 7 + 10, 14, BG);
+            tile_word(fx + 20, fy - 6, "WELCOME", BLUE, BG);
+            font8x8::draw_str(fx + 20, fy + 22, b"Your LingId -- compare it with friends out of band:", DIM, BG);
+            text_fit(fx + 20, fy + 38, &my_id.0, fw - 40, STRONG, BG);
+            let tips: [&[u8]; 6] = [
+                b"Up / Down + Enter   chat with a friend, or add a nearby peer",
+                b"/link               copy your lingmsg:// friend link",
+                b"/add                add the friend link on the clipboard",
+                b"/nick <name>        change your name     /ping   nudge them",
+                b"post-quantum hybrid crypto; a fresh key for every message",
+                b"",
+            ];
+            let mut ty = fy + 62;
+            for t in tips {
+                let n = t.len().min(((fw - 40) / 8) as usize);
+                font8x8::draw_str(fx + 20, ty, &t[..n], TEXT, BG);
+                ty += 16;
+            }
+            text_fit(fx + 20, fy + fh - 22, status(), fw - 40, DIM, BG);
+        },
+    }
+
+    // ---- the profile panel ----
+    if show_profile {
+        let px = cx + cw;
+        framebuffer::back_fill_rect(px, y, PROFILE_W, h, SIDE);
+        framebuffer::back_fill_rect(px, y, 1, h, LINE_SOFT);
+        match friend {
+            Some(s) => {
+                let f = &roster().friends[s];
+                let online = unsafe { (&*&raw const NEARBY).iter().any(|p| p.ling_id == f.ling_id) };
+                let col = person_color(f.handle.as_bytes());
+                // a banner in their colour, the avatar overlapping it
+                framebuffer::back_fill_rect(px + 1, y, PROFILE_W - 1, 56, mix(SIDE, col, 60));
+                hatch(px + 1, y, PROFILE_W - 1, 56, mix(SIDE, col, 60), col, 6, 70);
+                framebuffer::back_fill_rect(px + 14, y + 30, 60, 60, SIDE);
+                draw_avatar(px + 16, y + 32, 56, f.handle.as_bytes(), SIDE);
+                presence(px + 66, y + 82, online, SIDE);
+                text_fit(px + 16, y + 100, &f.handle, PROFILE_W - 32, STRONG, SIDE);
+                font8x8::draw_str(px + 16, y + 114, if online { b"online" as &[u8] } else { b"offline" }, if online { GREEN } else { DIM }, SIDE);
+                framebuffer::back_fill_rect(px + 16, y + 132, PROFILE_W - 32, 1, LINE);
+                tile_word(px + 16, y + 142, "LINGID", TEXT, SIDE);
+                draw_wrapped(px + 16, y + 162, PROFILE_W - 32, y + 200, &f.ling_id.0, DIM, SIDE);
+                framebuffer::back_fill_rect(px + 16, y + 206, PROFILE_W - 32, 1, LINE);
+                tile_word(px + 16, y + 216, "SECURITY", TEXT, SIDE);
+                let lines: [&[u8]; 5] = [b"Ed25519 + ML-DSA-87 id", b"X25519 + ML-KEM-768", b"new key every message", b"late frames: 256 ahead", b"history sealed at rest"];
+                let mut ly = y + 236;
+                for l in lines {
+                    framebuffer::back_fill_rect(px + 16, ly + 2, 4, 4, GREEN);
+                    font8x8::draw_str(px + 26, ly, l, TEXT, SIDE);
+                    ly += 14;
+                }
+            },
+            None => {
+                tile_word(px + 16, y + 14, "ACTIVE NOW", TEXT, SIDE);
+                let mut ly = y + 40;
+                let mut any = false;
+                for f in roster().friends.iter() {
+                    let online = unsafe { (&*&raw const NEARBY).iter().any(|p| p.ling_id == f.ling_id) };
+                    if !online || ly + 30 > y + h {
+                        continue;
+                    }
+                    any = true;
+                    draw_avatar(px + 16, ly, 24, f.handle.as_bytes(), SIDE);
+                    presence(px + 35, ly + 19, true, SIDE);
+                    text_fit(px + 48, ly + 8, &f.handle, PROFILE_W - 64, TEXT, SIDE);
+                    ly += 32;
+                }
+                if !any {
+                    font8x8::draw_str(px + 16, ly, b"It's quiet for now...", DIM, SIDE);
+                    font8x8::draw_str(px + 16, ly + 14, b"friends online on your", DIM, SIDE);
+                    font8x8::draw_str(px + 16, ly + 26, b"LAN show up here.", DIM, SIDE);
+                }
+            },
+        }
     }
 }

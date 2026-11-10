@@ -30,18 +30,22 @@ const LARGE_FLAG: u64 = 1 << 63;
 
 static mut FREE_HEAD: [u64; CLASS_SIZES.len()] = [0; CLASS_SIZES.len()];
 
-/// One bit per 4 KiB page of the first 4 GiB: set while the page is heap
-/// memory (a slab frame, or part of a large allocation). `lingrt`'s garbage
-/// collector scans stacks conservatively and only dereferences a candidate
-/// pointer that lands in such a page -- anything else is a stale or forged
-/// word that must not be touched.
-static mut HEAP_PAGES: [u64; 1 << 14] = [0; 1 << 14];
+/// One bit per 4 KiB page of everything the frame allocator can hand out
+/// (8 GiB): set while the page is heap memory (a slab frame, or part of a
+/// large allocation). `lingrt`'s garbage collector scans stacks
+/// conservatively and only dereferences a candidate pointer that lands in
+/// such a page -- anything else is a stale or forged word that must not be
+/// touched. It must cover every heap page: an object in a page it misses is
+/// never marked, so the collector frees it while it is still in use (an
+/// 8 GB Pi 5 crashed that way once the heap grew past 4 GiB).
+pub const HEAP_PAGE_LIMIT: usize = 1 << 21;
+static mut HEAP_PAGES: [u64; HEAP_PAGE_LIMIT / 64] = [0; HEAP_PAGE_LIMIT / 64];
 
 unsafe fn note_pages(addr: u64, order: usize, on: bool) {
     let first = (addr >> 12) as usize;
     for i in 0..(1usize << order) {
         let page = first + i;
-        if page >= 1 << 20 {
+        if page >= HEAP_PAGE_LIMIT {
             break;
         }
         let (w, b) = (page / 64, page % 64);
@@ -56,7 +60,7 @@ unsafe fn note_pages(addr: u64, order: usize, on: bool) {
 /// Whether `addr` lies in a page the heap owns right now (see `HEAP_PAGES`).
 pub fn is_heap_page(addr: u64) -> bool {
     let page = (addr >> 12) as usize;
-    page < 1 << 20 && unsafe { (HEAP_PAGES[page / 64] >> (page % 64)) & 1 == 1 }
+    page < HEAP_PAGE_LIMIT && unsafe { (HEAP_PAGES[page / 64] >> (page % 64)) & 1 == 1 }
 }
 
 fn class_for(needed: usize) -> Option<usize> {

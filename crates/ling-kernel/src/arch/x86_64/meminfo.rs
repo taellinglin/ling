@@ -67,7 +67,9 @@ pub fn detect_and_register(kernel_end: u64) {
         let info_ptr = ptr::read_volatile(&raw const mb2_info_ptr);
         if info_ptr == 0 {
             if !register_e820_handoff(kernel_end) {
-                crate::mm::frame::add_free_region(FALLBACK_BASE, FALLBACK_LEN, kernel_end);
+                // just past the kernel (linked at 16 MiB, it ends near 200 MiB)
+                let base = FALLBACK_BASE.max((kernel_end + 0x1F_FFFF) & !0x1F_FFFF);
+                crate::mm::frame::add_free_region(base, FALLBACK_LEN, kernel_end);
             }
             return;
         }

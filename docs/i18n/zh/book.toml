@@ -1,0 +1,25 @@
+# Generated layout: English at /docs/, translations at /docs/<lang>/ with the
+# same page paths. Build all five with:  python docs/tools/build.py
+[book]
+title = "Ling 文档"
+description = "全语种系统编程语言：用英文、中文、日文、韩文或泰文编写，随处运行。"
+authors = ["Ling Lin", "Sanny Lin"]
+language = "zh"
+src = "src"
+
+[build]
+build-dir = "../../book/zh"
+
+[output.html]
+site-url = "/docs/zh/"
+git-repository-url = "https://github.com/taellinglin/ling"
+edit-url-template = "https://github.com/taellinglin/ling/edit/master/docs/i18n/zh/src/{path}"
+additional-css = ["custom.css"]
+additional-js = ["lang.js"]
+no-section-label = false
+
+[output.html.playground]
+editable = false
+
+[output.html.search]
+enable = true

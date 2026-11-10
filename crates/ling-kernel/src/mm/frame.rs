@@ -32,6 +32,15 @@ const MAX_ORDER: usize = 14; // orders 0..=14 => 4KiB..=64MiB blocks
 /// lockstep until Phase 3's paging rewrite can map (and this allocator can
 /// track) more.
 const MAX_PHYS_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// The highest address handed out: on x86-64 the boot page tables (`boot.rs`)
+/// and the kernel's own (`paging.rs`) identity-map only [0, 4 GiB), so RAM
+/// above it (QEMU `-m 4G` and up, any real PC with more than ~3 GiB) must not
+/// be seeded -- the first free-list write there page-faulted at boot. The Pi
+/// maps all 8 GiB.
+#[cfg(target_arch = "x86_64")]
+const SEED_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
+#[cfg(not(target_arch = "x86_64"))]
+const SEED_LIMIT: u64 = MAX_PHYS_BYTES;
 const TOTAL_FRAMES: usize = (MAX_PHYS_BYTES / FRAME_SIZE as u64) as usize;
 
 const fn bitmap_bits(order: usize) -> usize {
@@ -132,33 +141,53 @@ fn list_pop_front(order: usize) -> Option<u64> {
     }
 }
 
-/// Mark one order-0 frame free, coalescing with its buddy up through
-/// however many orders actually merge. Internal: callers use
-/// [`add_free_region`] (boot-time seeding) or [`free_frames`] (an
-/// allocation's owner giving it back).
-fn free_one_frame(addr: u64) {
-    free_frames(addr, 0);
-}
-
 /// Register `[base, base+len)` as usable physical memory. Automatically
 /// clips anything below `kernel_end` (this kernel's own image, boot page
 /// tables, and stack — a bootloader's memory map has no idea where the
 /// ELF it just loaded landed, so it reports that range as ordinary
-/// available RAM) and anything at or above `MAX_PHYS_BYTES`. Frame-at-a-
-/// time via `free_one_frame` rather than inserting pre-aligned maximal
-/// blocks directly: this runs once at boot over at most a few hundred
-/// thousand frames (a few million cycles, not a hot path), and reusing the
-/// exact same coalescing path `free_frames` uses at runtime is less code
-/// and less risk than a second, boot-only insertion algorithm to keep
-/// correct in lockstep.
+/// available RAM) and anything at or above `MAX_PHYS_BYTES`. Inserts the
+/// largest naturally aligned block that fits at each step (through
+/// `free_frames`, so it still coalesces with a free buddy) rather than one
+/// frame at a time: on a Pi 5 this runs with the MMU off, where every access
+/// is uncached, and seeding ~1M frames individually looked like a hang.
 pub fn add_free_region(base: u64, len: u64, kernel_end: u64) {
+    // RAM above the seed limit goes to the high-memory pool (big read-only data only; see mm::highmem)
+    #[cfg(target_arch = "x86_64")]
+    if base.saturating_add(len) > SEED_LIMIT {
+        super::highmem::note(base.max(SEED_LIMIT), base.saturating_add(len));
+    }
     let mut start = base.max(kernel_end);
-    let end = (base.saturating_add(len)).min(MAX_PHYS_BYTES);
+    let end = (base.saturating_add(len)).min(MAX_PHYS_BYTES).min(SEED_LIMIT);
     start = (start + FRAME_SIZE as u64 - 1) & !(FRAME_SIZE as u64 - 1);
     let mut addr = start;
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::console_write(b"mm: seeding 0x");
+        crate::print_hex64(start);
+        crate::console_write(b"..0x");
+        crate::print_hex64(end);
+        crate::console_write(b"\n");
+    }
     while addr + FRAME_SIZE as u64 <= end {
-        free_one_frame(addr);
-        addr += FRAME_SIZE as u64;
+        let mut order = 0;
+        while order < MAX_ORDER {
+            let size = (FRAME_SIZE as u64) << (order + 1);
+            if addr & (size - 1) != 0 || addr + size > end {
+                break;
+            }
+            order += 1;
+        }
+        free_frames(addr, order);
+        crate::kstats::note_frames_added(1u64 << order);
+        let next = addr + ((FRAME_SIZE as u64) << order);
+        // progress marker every 256 MiB, to see where a hang is
+        #[cfg(target_arch = "aarch64")]
+        if next >> 28 != addr >> 28 {
+            crate::console_write(b"mm:   ..0x");
+            crate::print_hex64(next);
+            crate::console_write(b"\n");
+        }
+        addr = next;
     }
 }
 

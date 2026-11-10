@@ -931,9 +931,20 @@ fn has_credit(r: &Radio) -> bool {
 
 fn send_frame(chan: u8, payload: &[u8]) -> Option<()> {
     let t0 = now_ms();
+    // A green-thread fetch holds the net lock and yields the desktop a frame
+    // between credit checks (wifi::tick stays off the bus meanwhile), so it can
+    // afford the firmware's full budget. A main-thread send (a DHCP / time-sync
+    // / join step) cannot yield the frame loop, so cap its wait short -- on a
+    // marginal link the old 2 s budget froze the whole desktop ~2 s at a time.
+    let in_fetch = crate::coro::in_coro() && crate::drivers::netstack::net_owned_by_me();
+    let budget_ms = if in_fetch { 2_000 } else { 500 };
     while !has_credit(radio()?) {
         poll_rx();
-        if now_ms() - t0 > 2_000 {
+        if in_fetch {
+            crate::proc::sched::yield_now();
+            crate::coro::yield_now();
+        }
+        if now_ms() - t0 > budget_ms {
             return fail("no transmit credit from the firmware");
         }
     }

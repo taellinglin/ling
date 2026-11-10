@@ -35,10 +35,40 @@ pub fn write_byte(byte: u8) {
     }
 }
 
+/// Everything printed since boot (the last 512 KiB), for `report`: a real PC
+/// has no serial port to read, and photos of the screen cut long lines off.
+const KLOG_SIZE: usize = 512 * 1024;
+static mut KLOG: [u8; KLOG_SIZE] = [0; KLOG_SIZE];
+static mut KLOG_TOTAL: usize = 0;
+
+/// The kernel log, oldest first.
+pub fn klog() -> alloc::vec::Vec<u8> {
+    unsafe {
+        let buf = &*(&raw const KLOG);
+        let total = KLOG_TOTAL;
+        if total <= KLOG_SIZE {
+            return buf[..total].to_vec();
+        }
+        let at = total % KLOG_SIZE;
+        let mut v = buf[at..].to_vec();
+        v.extend_from_slice(&buf[..at]);
+        v
+    }
+}
+
 pub fn write(bytes: &[u8]) {
+    unsafe {
+        let buf = &mut *(&raw mut KLOG);
+        for &b in bytes {
+            buf[KLOG_TOTAL % KLOG_SIZE] = b;
+            KLOG_TOTAL += 1;
+        }
+    }
     for &b in bytes {
         write_byte(b);
     }
+    // boot messages are the boot screen's live data (no-op once it's gone)
+    crate::drivers::bootscreen::feed(bytes);
 }
 
 pub fn write_str(s: &str) {

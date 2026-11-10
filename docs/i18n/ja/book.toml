@@ -1,0 +1,25 @@
+# Generated layout: English at /docs/, translations at /docs/<lang>/ with the
+# same page paths. Build all five with:  python docs/tools/build.py
+[book]
+title = "Ling ドキュメント"
+description = "オムニグロット・システム言語：英語・中国語・日本語・韓国語・タイ語で書いて、どこでも動かす。"
+authors = ["Ling Lin", "Sanny Lin"]
+language = "ja"
+src = "src"
+
+[build]
+build-dir = "../../book/ja"
+
+[output.html]
+site-url = "/docs/ja/"
+git-repository-url = "https://github.com/taellinglin/ling"
+edit-url-template = "https://github.com/taellinglin/ling/edit/master/docs/i18n/ja/src/{path}"
+additional-css = ["custom.css"]
+additional-js = ["lang.js"]
+no-section-label = false
+
+[output.html.playground]
+editable = false
+
+[output.html.search]
+enable = true

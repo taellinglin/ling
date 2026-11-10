@@ -59,6 +59,18 @@ pub fn active() -> bool {
     st().mode != Mode::Latin
 }
 
+/// Abandon a half-finished composition (a pending dead key, romaji, hex
+/// digits or a Hangul syllable being built). The chosen mode is kept. Called
+/// at session/app boundaries so a stray partial composition never leaks into
+/// the next field (e.g. the sign-in password box).
+pub fn reset() {
+    let s = st();
+    s.pend.clear();
+    s.l = None;
+    s.v = None;
+    s.t = None;
+}
+
 /// The mode's short name for the indicator.
 pub fn label() -> &'static str {
     match st().mode {

@@ -1,0 +1,23 @@
+[package]
+name = "ling-sd"
+version = "2030.0.1"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>"]
+description = "A freestanding (no_std + alloc) Stable Diffusion 1.5 engine: CLIP ViT-L/14 text encoder with its BPE tokenizer, the UNet, the VAE decoder, Euler a / DPM++ 2M Karras samplers, read from a single-file fp16 .safetensors checkpoint. Runs on the CPU (SSE, or AVX2+FMA when the caller says it is usable), on as many cores as the caller lends it. For LingOS."
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+default = []
+# host tests and tools only (file-backed sources, std threads); the kernel build leaves it off
+std = []
+
+[dependencies]
+libm = { version = "0.2", default-features = false }
+
+[dev-dependencies]
+# the reference the engine is checked against: the host engine (candle) on the CPU, same checkpoint, same inputs
+ling-diffusion = { path = "../ling-diffusion" }
+candle-core = { version = "0.11", default-features = false }
+rand = "0.8"
+png = "0.17"

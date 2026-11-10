@@ -35,6 +35,10 @@ fn card_path(r: &str) -> Option<String> {
     if (r == "home" || r.starts_with("home/")) && crate::fs::media::has("card") {
         return Some(format!("media/card/{r}"));
     }
+    // an installed x86 system: home/ lives on its "LingOS Data" partition
+    if (r == "home" || r.starts_with("home/")) && crate::fs::media::has("data") {
+        return Some(format!("media/data/{r}"));
+    }
     // Installed packages (`pkg-<name>/...`, the `packages/<name>` version
     // records) live on the package volume when there is one -- lingfs is a
     // few MiB, packages are often 100+ MB. Same fallback as home/: reads
@@ -56,6 +60,9 @@ fn is_package_path(r: &str) -> bool {
 pub fn package_volume() -> Option<&'static str> {
     if crate::fs::media::has("card") {
         Some("card")
+    } else if crate::fs::media::has("data") {
+        // the installed system's "LingOS Data" partition (install-disk)
+        Some("data")
     } else if crate::fs::media::has("disk1") {
         Some("disk1")
     } else {
@@ -179,6 +186,13 @@ pub fn parent(p: &str) -> String {
 /// anything else under the program's data root.
 pub fn resolve(p: &str) -> String {
     let n = norm(p);
+    // A leading '/' is lingfs-root absolute (the convention lingfs's own
+    // "/services" / "/hostname" files use): never re-rooted under the app's
+    // folder. The console's `miao` alias leans on this to run the temple's
+    // rites in the shell's working directory, not inside the package folder.
+    if p.starts_with('/') {
+        return n;
+    }
     if n.is_empty() {
         return root();
     }
@@ -250,18 +264,31 @@ pub fn read(p: &str) -> Option<Vec<u8>> {
             }
         }
     }
+    // x86 has no SD data partition: a home file lingfs (a few MiB) doesn't
+    // hold may sit on the FAT data disk under the same path -- an app's big
+    // data (FLY for FUN's assets) copied to media/disk1/home/<user>/...
+    if r.starts_with("home/") && card_path(&r).is_none() {
+        if let Some(v) = package_volume() {
+            if let Some(b) = crate::fs::media::read(&format!("media/{v}/{r}")) {
+                return Some(b);
+            }
+        }
+    }
     crate::appfs::get(&n)
         .or_else(|| crate::appfs::get(&r))
         .or_else(|| img(&n).and_then(|p| crate::appfs::get(&p)))
         .map(|b| b.to_vec())
 }
 
-/// Write a file (creating its folders); false without storage.
+/// Write a file (creating its folders); false without storage, or when `chmod` made it read-only.
 pub fn write(p: &str, data: &[u8]) -> bool {
     if crate::fs::media::is_media_path(&norm(p)) {
         return crate::fs::media::write(&norm(p), data);
     }
     let r = resolve(p);
+    if !crate::modes::writable(&r) {
+        return false;
+    }
     if let Some(c) = card_path(&r) {
         if let Some(i) = c.rfind('/') {
             crate::fs::media::mkdir_p(&c[..i]);
@@ -349,10 +376,21 @@ pub fn delete(p: &str) -> bool {
     if crate::fs::media::is_media_path(&n) {
         return crate::fs::media::delete(&n);
     }
+    if !crate::modes::writable(&resolve(&n)) {
+        return false; // chmod made it read-only
+    }
     if is_dir(&n) && !list(&n).is_empty() {
         return false;
     }
-    if let Some(c) = card_path(&resolve(&n)) {
+    let gone = delete_storage(&n);
+    if gone {
+        crate::modes::forget(&resolve(&n));
+    }
+    gone
+}
+
+fn delete_storage(n: &str) -> bool {
+    if let Some(c) = card_path(&resolve(n)) {
         if crate::fs::media::exists(&c) {
             return crate::fs::media::delete(&c);
         }
@@ -360,11 +398,11 @@ pub fn delete(p: &str) -> bool {
     if !ready() {
         return false;
     }
-    let r = resolve(&n);
+    let r = resolve(n);
     if crate::fs::lingfs::remove_path(&r).unwrap_or(false) {
         return true;
     }
-    r != n && crate::fs::lingfs::remove_path(&n).unwrap_or(false)
+    r != n && crate::fs::lingfs::remove_path(n).unwrap_or(false)
 }
 
 pub fn basename(p: &str) -> String {
@@ -407,16 +445,28 @@ pub fn copy(from: &str, to: &str) -> bool {
     }
 }
 
-/// Move / rename: in place inside one removable volume, else copy + delete.
+/// Move / rename: in place inside one removable volume, else copy + delete. A file or folder keeps
+/// its `chmod` mode; a read-only one is not moved (the delete half would be refused).
 pub fn rename(from: &str, to: &str) -> bool {
     let (a, b) = (norm(from), norm(to));
+    if !crate::modes::writable(&resolve(&a)) {
+        return false;
+    }
+    let mode_from = resolve(&a);
     if crate::fs::media::is_media_path(&a) && crate::fs::media::is_media_path(&b) && crate::fs::media::rename(&a, &b) {
+        crate::modes::moved(&mode_from, &resolve(&b));
         return true;
     }
-    copy(&a, &b) && delete_tree(&a)
+    if !copy(&a, &b) {
+        return false;
+    }
+    // the modes follow the files before the delete half forgets the old path
+    crate::modes::moved(&mode_from, &resolve(&b));
+    delete_tree(&a)
 }
 
-fn delete_tree(p: &str) -> bool {
+/// Delete a file or a folder with everything in it (each part still honours read-only modes).
+pub fn delete_tree(p: &str) -> bool {
     if is_dir(p) {
         for (name, _, _) in list(p) {
             delete_tree(&join(p, &name));
@@ -524,6 +574,24 @@ fn is_model_path(n: &str) -> bool {
 /// over every mounted volume (card, disk1, usb0, ...). An absolute
 /// `media/...` or `home/...` path (Settings > AI > Browse) is taken as is.
 pub fn locate_model(p: &str) -> Option<String> {
+    // apps ask every frame (LingStationX's Settings > AI looks for its three models): remember answers for 3 s, so a search over
+    // the volumes' folders is not a few hundred SD-card sector reads a frame
+    static mut SEEN: Vec<(String, Option<String>, u64)> = Vec::new();
+    let now = crate::arch::timer::now_ms();
+    let seen = unsafe { &mut *(&raw mut SEEN) };
+    seen.retain(|e| now.wrapping_sub(e.2) < 3000);
+    if let Some(e) = seen.iter().find(|e| e.0 == p) {
+        return e.1.clone();
+    }
+    let found = locate_model_now(p);
+    if seen.len() >= 32 {
+        seen.remove(0);
+    }
+    seen.push((String::from(p), found.clone(), now));
+    found
+}
+
+fn locate_model_now(p: &str) -> Option<String> {
     let n = norm(p);
     if crate::fs::media::is_media_path(&n) {
         return crate::fs::media::exists(&n).then_some(n);

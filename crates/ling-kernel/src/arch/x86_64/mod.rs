@@ -17,6 +17,10 @@ pub mod gdt;
 pub mod idt;
 pub mod paging;
 pub mod pic;
+pub mod smp;
+pub mod cpudrv;
 pub mod trap;
+/// USB host controller (keyboards, mice, flash drives), polled.
+pub mod xhci;
 
 pub mod boot;

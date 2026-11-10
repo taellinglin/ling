@@ -199,7 +199,9 @@ fn drain_8042() {
         let byte = unsafe { io::inb(0x60) };
         if status & 0x20 != 0 {
             crate::drivers::mouse::irq_byte(byte);
-        } else {
+        } else if !crate::arch::xhci::usb_keyboard_live() {
+            // (with a live USB keyboard, bytes here are the firmware's PS/2
+            // emulation of that same keyboard: typing them too doubled keys)
             crate::drivers::keyboard::irq_scancode(byte);
         }
     }
@@ -237,6 +239,11 @@ extern "x86-interrupt" fn isr_spurious(_frame: InterruptFrame) {
     // a legitimately spurious IRQ7/IRQ15, or a device never masked). EOI
     // unconditionally so the controller doesn't wedge; there is nothing
     // useful to dump since no specific device claims this vector.
+}
+
+/// The SMP "work is ready" IPI: waking the core from `hlt` is all it is for.
+extern "x86-interrupt" fn isr_smp_wake(_frame: InterruptFrame) {
+    super::smp::eoi();
 }
 
 pub fn init() {
@@ -287,7 +294,12 @@ pub fn init() {
     set_gate(pic::IRQ0_VECTOR, super::trap::timer_trap_entry as *const () as u64, gdt::TIMER_IST);
     set_gate(pic::IRQ0_VECTOR + 1, isr_keyboard as *const () as u64, 0);
     set_gate(pic::IRQ0_VECTOR + 12, isr_mouse as *const () as u64, 0);
+    set_gate(super::smp::WAKE_VECTOR, isr_smp_wake as *const () as u64, 0);
+    load();
+}
 
+/// Load the IDT on this core (the boot core from `init`, each other core from smp.rs).
+pub fn load() {
     #[repr(C, packed)]
     struct IdtPointer {
         limit: u16,

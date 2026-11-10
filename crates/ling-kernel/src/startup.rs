@@ -29,7 +29,9 @@ static mut LOCK_REQUESTED: bool = false;
 /// The next app started parks at its first frame.
 static mut BG_START: bool = false;
 
-fn read_list() -> Vec<String> {
+/// `/startup` as `(name, is_daemon)`: a `service <name>` line runs once at
+/// boot; a `daemon <name>` line is also supervised (restarted when it dies).
+fn read_entries() -> Vec<(String, bool)> {
     if !crate::fs::lingfs::is_mounted() {
         return Vec::new();
     }
@@ -38,22 +40,57 @@ fn read_list() -> Vec<String> {
         Ok(Some(n)) => core::str::from_utf8(&buf[..n])
             .unwrap_or("")
             .lines()
-            .filter_map(|l| l.trim().strip_prefix("service "))
-            .map(|s| String::from(s.trim()))
-            .filter(|s| !s.is_empty())
+            .filter_map(|l| {
+                let l = l.trim();
+                if let Some(s) = l.strip_prefix("daemon ") {
+                    return Some((String::from(s.trim()), true));
+                }
+                l.strip_prefix("service ").map(|s| (String::from(s.trim()), false))
+            })
+            .filter(|(s, _)| !s.is_empty())
             .collect(),
         _ => Vec::new(),
     }
 }
 
-fn write_list(list: &[String]) -> bool {
+fn write_entries(list: &[(String, bool)]) -> bool {
     let mut text = String::new();
-    for s in list {
-        text.push_str("service ");
+    for (s, daemon) in list {
+        text.push_str(if *daemon { "daemon " } else { "service " });
         text.push_str(s);
         text.push('\n');
     }
+    invalidate_daemons();
     crate::fs::lingfs::write_file_any(STARTUP_PATH, text.as_bytes()).is_ok()
+}
+
+/// Enabled service names (daemon or not) -- for `enabled` / `boot_once`.
+fn read_list() -> Vec<String> {
+    read_entries().into_iter().map(|(s, _)| s).collect()
+}
+
+/// Is this service marked a daemon (supervised)?
+pub fn is_daemon(name: &str) -> bool {
+    read_entries().iter().any(|(s, d)| s == name && *d)
+}
+
+// The daemon names, cached so `tick` never touches the SD card unless the
+// startup list was edited (set / set_daemon invalidate it).
+static mut DAEMONS: Vec<String> = Vec::new();
+static mut DAEMONS_INIT: bool = false;
+
+fn invalidate_daemons() {
+    unsafe { DAEMONS_INIT = false };
+}
+
+fn daemon_names() -> Vec<String> {
+    unsafe {
+        if !DAEMONS_INIT {
+            *(&raw mut DAEMONS) = read_entries().into_iter().filter(|(_, d)| *d).map(|(s, _)| s).collect();
+            DAEMONS_INIT = true;
+        }
+        (*(&raw const DAEMONS)).clone()
+    }
 }
 
 /// Every service that can be switched on: the SSH server, then each program
@@ -95,16 +132,78 @@ pub fn set(name: &str, on: bool) -> bool {
     if crate::app_named(name.as_bytes()).is_none() {
         return false;
     }
-    let mut l = read_list();
-    l.retain(|s| s != name);
+    let mut l = read_entries();
+    let was_daemon = l.iter().find(|(s, _)| s == name).map(|(_, d)| *d).unwrap_or(false);
+    l.retain(|(s, _)| s != name);
     if on {
-        l.push(String::from(name));
+        l.push((String::from(name), was_daemon)); // keep its daemon flag
     }
-    let ok = write_list(&l);
+    let ok = write_entries(&l);
     if on && !running(name) {
         start(name);
     }
     ok
+}
+
+/// Mark a service a daemon (supervised, restarted on crash) or a plain
+/// one-shot service. Either way it is enabled and started now if not running.
+pub fn set_daemon(name: &str, daemon: bool) -> bool {
+    if name == "ssh" {
+        // sshd supervises its own listener; "daemon" is moot, just keep it on.
+        return set("ssh", true);
+    }
+    if crate::app_named(name.as_bytes()).is_none() {
+        return false;
+    }
+    let mut l = read_entries();
+    l.retain(|(s, _)| s != name);
+    l.push((String::from(name), daemon));
+    let ok = write_entries(&l);
+    if !running(name) {
+        start(name);
+    }
+    ok
+}
+
+/// How long a crashed daemon waits before the supervisor respawns it, and the
+/// cadence the supervisor runs at (kept off the per-frame hot path).
+const RESTART_BACKOFF_MS: u64 = 3000;
+static mut LAST_TICK_MS: u64 = 0;
+static mut RESTART_AT: Vec<(String, u64)> = Vec::new();
+
+/// From every `present()`: at most a few times a second, restart any daemon
+/// whose coroutine has ended (returned or crashed). A per-daemon backoff keeps
+/// a daemon that dies on startup from pinning the CPU in a respawn loop. Reads
+/// no storage unless the startup list changed (daemon_names is cached).
+pub fn tick() {
+    if !unsafe { BOOTED } {
+        return;
+    }
+    let now = crate::arch::timer::now_ms();
+    if now.saturating_sub(unsafe { LAST_TICK_MS }) < 1000 {
+        return;
+    }
+    unsafe { LAST_TICK_MS = now };
+    crate::drivers::netstack::lease_tick(now);
+    for name in daemon_names() {
+        if name == "ssh" || running(&name) {
+            continue;
+        }
+        let ra = unsafe { &mut *(&raw mut RESTART_AT) };
+        match ra.iter_mut().find(|(n, _)| *n == name) {
+            Some(e) => {
+                if now.saturating_sub(e.1) < RESTART_BACKOFF_MS {
+                    continue;
+                }
+                e.1 = now;
+            },
+            None => ra.push((name.clone(), now)),
+        }
+        crate::console_write(b"daemon: restarting ");
+        crate::console_write(name.as_bytes());
+        crate::console_write(b"\n");
+        start(&name);
+    }
 }
 
 /// Start one program as a service (headless, owner "system").
@@ -143,11 +242,13 @@ pub fn boot_once() {
 }
 
 /// The SSH server's boot switch (x86: lingfs `/services`; the Pi: setup.conf).
-fn ssh_at_boot() -> bool {
+/// On the Pi the default is ON (anything but a saved "0"), matching what
+/// `desktop_boot` actually does -- the tab used to say "off" while sshd ran.
+pub fn ssh_at_boot() -> bool {
     #[cfg(target_arch = "x86_64")]
     return crate::services::ssh_enabled();
     #[cfg(target_arch = "aarch64")]
-    return crate::setup::saved("ssh") == "1";
+    return crate::setup::saved("ssh") != "0";
 }
 
 fn set_ssh_at_boot(on: bool) {

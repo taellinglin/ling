@@ -56,7 +56,17 @@ static mut PENDING_BULK: u8 = 0;
 const BULK_UPGRADE: u8 = 1;
 const BULK_ALL: u8 = 2;
 
-/// Catalog line indices shown under the current tab.
+/// This machine's short name, for the tab title and the fit check.
+fn machine_name() -> &'static [u8] {
+    if cfg!(target_arch = "aarch64") {
+        b"rpi5"
+    } else {
+        b"x86-64"
+    }
+}
+
+/// Catalog line indices shown under the current tab. The "LingOS apps" tab
+/// filters by THIS machine's words (it used to say x86 even on a Pi).
 fn visible() -> alloc::vec::Vec<usize> {
     let mut v = alloc::vec::Vec::new();
     for i in 0..line_count() {
@@ -66,8 +76,9 @@ fn visible() -> alloc::vec::Vec<usize> {
             continue;
         }
         let d = alloc::string::String::from_utf8_lossy(desc(line)).into_owned();
-        let (lingos, x86, _pi) = lingfu::for_lingos(&d);
-        if lingos && x86 {
+        let (lingos, x86, pi) = lingfu::for_lingos(&d);
+        let here = if cfg!(target_arch = "aarch64") { pi } else { x86 };
+        if lingos && here {
             v.push(i);
         }
     }
@@ -325,22 +336,96 @@ fn desc(line: &[u8]) -> &[u8] {
     field(line, 3)
 }
 
+/// The design system's seven keys (theme.ling's C_RED..C_VIOLET).
+const ROYGBIV: [u32; 7] = [0xED4A37, 0xF7941E, 0xF7D846, 0x45C870, 0x3BAAEB, 0x4A64D8, 0x9A53D6];
+
+/// Integer blend: `a` toward `b` by num/den per channel.
+fn mix(a: u32, b: u32, num: u32, den: u32) -> u32 {
+    let ch = |s: u32| {
+        let (ca, cb) = ((a >> s) & 0xFF, (b >> s) & 0xFF);
+        (ca * (den - num) + cb * num) / den
+    };
+    (ch(16) << 16) | (ch(8) << 8) | ch(0)
+}
+
+/// Corner brackets (the design system's frame mark) around a rect.
+fn brackets(x: u32, y: u32, w: u32, h: u32, arm: u32, col: u32) {
+    let arm = arm.min(w / 3).min(h / 3).max(2);
+    framebuffer::back_fill_rect(x, y, arm, 1, col);
+    framebuffer::back_fill_rect(x, y, 1, arm, col);
+    framebuffer::back_fill_rect(x + w - arm, y, arm, 1, col);
+    framebuffer::back_fill_rect(x + w - 1, y, 1, arm, col);
+    framebuffer::back_fill_rect(x, y + h - 1, arm, 1, col);
+    framebuffer::back_fill_rect(x, y + h - arm, 1, arm, col);
+    framebuffer::back_fill_rect(x + w - arm, y + h - 1, arm, 1, col);
+    framebuffer::back_fill_rect(x + w - 1, y + h - arm, 1, arm, col);
+}
+
+/// 45-degree hatch inside a rect (one pixel every `sp` along each diagonal) --
+/// the design system's crosshatch, cheap enough for a selection row.
+fn hatch(x: u32, y: u32, w: u32, h: u32, sp: u32, col: u32) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let mut d = 0;
+    while d < w + h {
+        let mut yy = if d >= w { d - w + 1 } else { 0 };
+        while yy < h && yy <= d {
+            let xx = d - yy;
+            if xx < w {
+                framebuffer::back_set_pixel(x + xx, y + yy, col);
+            }
+            yy += sp.max(2);
+        }
+        d += sp.max(2);
+    }
+}
+
+/// One tab chip: bracketed + accent when selected, dim otherwise. Returns the
+/// x after the chip.
+fn tab_chip(x: u32, y: u32, label: &[u8], on: bool, accent: u32, dim: u32, panel: u32) -> u32 {
+    let w = label.len() as u32 * 8 + 14;
+    if on {
+        hatch(x + 2, y, w - 4, 14, 4, mix(accent, panel, 7, 10));
+        brackets(x, y.saturating_sub(2), w, 18, 4, accent);
+    }
+    font8x8::draw_str(x + 7, y + 1, label, if on { accent } else { dim }, if on { mix(accent, panel, 7, 10) } else { panel });
+    x + w + 10
+}
+
 pub fn draw(x: u32, y: u32, w: u32, h: u32) {
     let text = theme::color(theme::SLOT_TEXT);
     let dim = theme::color(theme::SLOT_DIM);
     let panel = theme::color(theme::SLOT_PANEL);
     let accent = theme::color(theme::SLOT_ACCENT);
-    let hl = theme::color(theme::SLOT_PANEL_BORDER);
+
+    // The LingStationX design system: ROYGBIV key rule along the top, tab
+    // chips with corner brackets, hatched selection, corner-bracketed frame.
+    let seg_w = w / 7;
+    for (i, c) in ROYGBIV.iter().enumerate() {
+        let sx = x + i as u32 * seg_w;
+        let sw = if i == 6 { w - 6 * seg_w } else { seg_w };
+        framebuffer::back_fill_rect(sx, y, sw, 2, *c);
+    }
+    brackets(x, y + 4, w, h.saturating_sub(4), 10, mix(accent, panel, 2, 5));
 
     let tab_all = unsafe { TAB_ALL };
-    font8x8::draw_str(x, y, if tab_all { b"lingfu -- all packages (LingOS x86-64)" } else { b"lingfu -- LingOS apps for x86-64" }, accent, panel);
-    font8x8::draw_str(x, y + 14, b"up/down select  Enter install/run  Tab apps|all  S resync  U update all  A install all", dim, panel);
+    let mut tx = x + 4;
+    let mut tab1 = [0u8; 24];
+    let t1 = b"LingOS apps - ";
+    tab1[..t1.len()].copy_from_slice(t1);
+    let mn = machine_name();
+    tab1[t1.len()..t1.len() + mn.len()].copy_from_slice(mn);
+    tx = tab_chip(tx, y + 8, &tab1[..t1.len() + mn.len()], !tab_all, accent, dim, panel);
+    tx = tab_chip(tx, y + 8, b"all packages", tab_all, accent, dim, panel);
+    let _ = tx;
+    font8x8::draw_str(x + 4, y + 28, b"up/down select  Enter install/run  Tab apps|all  S resync  U update all  A install all", mix(text, panel, 2, 5), panel);
 
     let vis = visible();
     let count = vis.len();
-    let list_y = y + 36;
+    let list_y = y + 46;
     let row_h = 28u32;
-    let avail = h.saturating_sub(36 + 22);
+    let avail = h.saturating_sub(46 + 22);
     let rows = (avail / row_h).max(1) as usize;
     let sel = unsafe { SEL.min(count.saturating_sub(1)) };
     let start = if sel >= rows { sel + 1 - rows } else { 0 };
@@ -353,16 +438,16 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
 
     // Icon column: a square inset into each row, text shifted right past it.
     let icon_pad = 4u32;
-    let text_x = x + ICON_DIM as u32 + icon_pad * 2;
+    let text_x = x + 6 + ICON_DIM as u32 + icon_pad * 2;
 
     if count == 0 {
         font8x8::draw_str(
-            x,
+            x + 6,
             list_y,
             if line_count() == 0 {
                 b"(no packages -- press S to sync a reachable repo)" as &[u8]
             } else {
-                b"(no package describes itself as a LingOS app for x86-64 -- Tab shows all)"
+                b"(no package describes itself as a LingOS app for this machine -- Tab shows all)"
             },
             dim,
             panel,
@@ -377,37 +462,42 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
         let i = vis[vi];
         if let Some(line) = nth_line(i) {
             let ry = list_y + r as u32 * row_h;
-            let rowbg = if vi == sel { hl } else { panel };
-            framebuffer::back_fill_rounded_rect(
-                x.saturating_sub(4),
-                ry.saturating_sub(2),
-                w.saturating_sub(8),
-                row_h - 2,
-                5,
-                rowbg,
-            );
+            let rowbg = if vi == sel { mix(accent, panel, 17, 20) } else { panel };
+            framebuffer::back_fill_rounded_rect(x + 2, ry.saturating_sub(2), w.saturating_sub(8), row_h - 2, 5, rowbg);
+            if vi == sel {
+                hatch(x + 2, ry.saturating_sub(2), w.saturating_sub(8), row_h - 2, 6, mix(accent, rowbg, 4, 5));
+                brackets(x + 2, ry.saturating_sub(2), w.saturating_sub(8), row_h - 2, 6, accent);
+            }
             // Icon (or a placeholder tile until it loads / if it failed).
             let iy = ry.saturating_sub(1);
-            if !blit_icon(i, x, iy) {
-                framebuffer::back_fill_rounded_rect(x, iy, ICON_DIM as u32, ICON_DIM as u32, 4, dim);
-                framebuffer::back_fill_rounded_rect(
-                    x + 1,
-                    iy + 1,
-                    ICON_DIM as u32 - 2,
-                    ICON_DIM as u32 - 2,
-                    4,
-                    rowbg,
-                );
+            if !blit_icon(i, x + 6, iy) {
+                framebuffer::back_fill_rounded_rect(x + 6, iy, ICON_DIM as u32, ICON_DIM as u32, 4, dim);
+                framebuffer::back_fill_rounded_rect(x + 7, iy + 1, ICON_DIM as u32 - 2, ICON_DIM as u32 - 2, 4, rowbg);
             }
             let name = field(line, 0);
             let ver = field(line, 1);
-            font8x8::draw_str(text_x, ry, name, if vi == sel { accent } else { text }, rowbg);
+            // The name's first letter picks its ROYGBIV key -- every package
+            // keeps a stable color, the way the design system colors kinds.
+            let keycol = ROYGBIV[(name.first().copied().unwrap_or(0) as usize) % 7];
+            font8x8::draw_str(text_x, ry, name, if vi == sel { accent } else { mix(keycol, text, 2, 5) }, rowbg);
             font8x8::draw_str(text_x + (name.len() as u32 + 1) * 8, ry, ver, dim, rowbg);
-            // Installed / runnable state from storage.
+            // Installed / runnable state from storage; "LingOS" chip otherwise.
+            let mut badge_drawn = false;
             if let Ok(ns) = core::str::from_utf8(name) {
                 if lingfu::is_installed(ns) {
                     let badge: &[u8] = if lingfu::is_app(ns) { b"installed - app (Enter runs)" } else { b"installed" };
-                    let bx = x + w.saturating_sub(badge.len() as u32 * 8 + 12);
+                    let bx = x + w.saturating_sub(badge.len() as u32 * 8 + 14);
+                    font8x8::draw_str(bx, ry, badge, if is_light_bg(rowbg) { 0x1F8A45 } else { 0x6AC06A }, rowbg);
+                    badge_drawn = true;
+                }
+            }
+            if !badge_drawn && tab_all {
+                let d = alloc::string::String::from_utf8_lossy(desc(line)).into_owned();
+                let (lingos, x86, pi) = lingfu::for_lingos(&d);
+                let here = if cfg!(target_arch = "aarch64") { pi } else { x86 };
+                if lingos && here {
+                    let badge: &[u8] = b"LingOS";
+                    let bx = x + w.saturating_sub(badge.len() as u32 * 8 + 14);
                     font8x8::draw_str(bx, ry, badge, accent, rowbg);
                 }
             }
@@ -419,7 +509,13 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
     }
 
     let st = unsafe { &(&*&raw const STATUS)[..STATUS_LEN] };
-    font8x8::draw_str(x, y + h.saturating_sub(16), st, dim, panel);
+    font8x8::draw_str(x + 4, y + h.saturating_sub(16), st, dim, panel);
+}
+
+/// Is this background light? (badge contrast on a light theme)
+fn is_light_bg(c: u32) -> bool {
+    let (r, g, b) = ((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+    2 * r + 3 * g + b > 3 * 255
 }
 
 fn install_selected() {

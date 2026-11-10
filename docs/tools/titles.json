@@ -1,0 +1,394 @@
+{
+ "index.md": {
+  "en": "Introduction",
+  "zh": "简介",
+  "ja": "はじめに",
+  "ko": "소개",
+  "th": "บทนำ"
+ },
+ "books.md": {
+  "en": "The Ling Book (PDF)",
+  "zh": "Ling 之书（PDF）",
+  "ja": "Ling ブック（PDF）",
+  "ko": "Ling 북 (PDF)",
+  "th": "หนังสือ Ling (PDF)"
+ },
+ "showcase.md": {
+  "en": "Showcase",
+  "zh": "作品展示",
+  "ja": "ショーケース",
+  "ko": "쇼케이스",
+  "th": "ผลงานตัวอย่าง"
+ },
+ "getting-started/install.md": {
+  "en": "Installation",
+  "zh": "安装",
+  "ja": "インストール",
+  "ko": "설치",
+  "th": "การติดตั้ง"
+ },
+ "getting-started/hello.md": {
+  "en": "Hello World",
+  "zh": "你好，世界",
+  "ja": "ハローワールド",
+  "ko": "헬로 월드",
+  "th": "สวัสดีชาวโลก"
+ },
+ "getting-started/running.md": {
+  "en": "Running Programs",
+  "zh": "运行程序",
+  "ja": "プログラムの実行",
+  "ko": "프로그램 실행",
+  "th": "การรันโปรแกรม"
+ },
+ "getting-started/first-room.md": {
+  "en": "Your First 3D Room",
+  "zh": "你的第一个 3D 房间",
+  "ja": "はじめての 3D ルーム",
+  "ko": "첫 번째 3D 방",
+  "th": "ห้อง 3 มิติห้องแรก"
+ },
+ "tutorials/values.md": {
+  "en": "Values and Bindings",
+  "zh": "值与绑定",
+  "ja": "値と束縛",
+  "ko": "값과 바인딩",
+  "th": "ค่าและการผูก"
+ },
+ "tutorials/control-flow.md": {
+  "en": "Decisions and Loops",
+  "zh": "判断与循环",
+  "ja": "条件分岐とループ",
+  "ko": "조건과 반복",
+  "th": "การตัดสินใจและการวนซ้ำ"
+ },
+ "tutorials/functions.md": {
+  "en": "Functions",
+  "zh": "函数",
+  "ja": "関数",
+  "ko": "함수",
+  "th": "ฟังก์ชัน"
+ },
+ "tutorials/lists-text.md": {
+  "en": "Lists and Text",
+  "zh": "列表与文本",
+  "ja": "リストとテキスト",
+  "ko": "리스트와 텍스트",
+  "th": "รายการและข้อความ"
+ },
+ "tutorials/drawing-games.md": {
+  "en": "Drawing and Games",
+  "zh": "绘图与游戏",
+  "ja": "描画とゲーム",
+  "ko": "그리기와 게임",
+  "th": "การวาดและเกม"
+ },
+ "tutorials/sound-music.md": {
+  "en": "Sound and Music",
+  "zh": "声音与音乐",
+  "ja": "サウンドと音楽",
+  "ko": "소리와 음악",
+  "th": "เสียงและดนตรี"
+ },
+ "tutorials/web-service.md": {
+  "en": "A Small Web Service",
+  "zh": "一个小型 Web 服务",
+  "ja": "小さな Web サービス",
+  "ko": "작은 웹 서비스",
+  "th": "เว็บเซอร์วิสขนาดเล็ก"
+ },
+ "language/syntax.md": {
+  "en": "Syntax",
+  "zh": "语法",
+  "ja": "構文",
+  "ko": "문법",
+  "th": "ไวยากรณ์"
+ },
+ "language/keywords.md": {
+  "en": "Keywords",
+  "zh": "关键字",
+  "ja": "キーワード",
+  "ko": "키워드",
+  "th": "คำสงวน"
+ },
+ "language/types.md": {
+  "en": "Types and Values",
+  "zh": "类型与值",
+  "ja": "型と値",
+  "ko": "타입과 값",
+  "th": "ชนิดข้อมูลและค่า"
+ },
+ "language/errors.md": {
+  "en": "Errors and Results",
+  "zh": "错误与结果",
+  "ja": "エラーと結果",
+  "ko": "오류와 결과",
+  "th": "ข้อผิดพลาดและผลลัพธ์"
+ },
+ "language/modules.md": {
+  "en": "Modules and Projects",
+  "zh": "模块与项目",
+  "ja": "モジュールとプロジェクト",
+  "ko": "모듈과 프로젝트",
+  "th": "โมดูลและโปรเจกต์"
+ },
+ "language/multilingual.md": {
+  "en": "Writing in Five Languages",
+  "zh": "用五种语言编写",
+  "ja": "5 つの言語で書く",
+  "ko": "다섯 가지 언어로 작성하기",
+  "th": "เขียนได้ห้าภาษา"
+ },
+ "language/limits.md": {
+  "en": "Known Limits",
+  "zh": "已知限制",
+  "ja": "既知の制限",
+  "ko": "알려진 제한 사항",
+  "th": "ข้อจำกัดที่ทราบ"
+ },
+ "reference/index.md": {
+  "en": "Overview",
+  "zh": "概览",
+  "ja": "概要",
+  "ko": "개요",
+  "th": "ภาพรวม"
+ },
+ "reference/core.md": {
+  "en": "Output, Math and Logic",
+  "zh": "输出、数学与逻辑",
+  "ja": "出力・数学・論理",
+  "ko": "출력, 수학, 논리",
+  "th": "เอาต์พุต คณิตศาสตร์ และตรรกะ"
+ },
+ "reference/text-lists.md": {
+  "en": "Text and Lists",
+  "zh": "文本与列表",
+  "ja": "テキストとリスト",
+  "ko": "텍스트와 리스트",
+  "th": "ข้อความและรายการ"
+ },
+ "reference/files.md": {
+  "en": "Files, Time and System",
+  "zh": "文件、时间与系统",
+  "ja": "ファイル・時刻・システム",
+  "ko": "파일, 시간, 시스템",
+  "th": "ไฟล์ เวลา และระบบ"
+ },
+ "reference/window.md": {
+  "en": "Window and Camera",
+  "zh": "窗口与摄像机",
+  "ja": "ウィンドウとカメラ",
+  "ko": "창과 카메라",
+  "th": "หน้าต่างและกล้อง"
+ },
+ "reference/drawing.md": {
+  "en": "2D Drawing and Images",
+  "zh": "2D 绘图与图像",
+  "ja": "2D 描画と画像",
+  "ko": "2D 그리기와 이미지",
+  "th": "การวาด 2 มิติและรูปภาพ"
+ },
+ "reference/shapes.md": {
+  "en": "3D Shapes and Meshes",
+  "zh": "3D 形状与网格",
+  "ja": "3D 形状とメッシュ",
+  "ko": "3D 도형과 메시",
+  "th": "รูปทรงและเมช 3 มิติ"
+ },
+ "reference/fonts-ui.md": {
+  "en": "Fonts and UI",
+  "zh": "字体与界面",
+  "ja": "フォントと UI",
+  "ko": "폰트와 UI",
+  "th": "ฟอนต์และ UI"
+ },
+ "reference/animation.md": {
+  "en": "Animation",
+  "zh": "动画",
+  "ja": "アニメーション",
+  "ko": "애니메이션",
+  "th": "แอนิเมชัน"
+ },
+ "reference/postfx.md": {
+  "en": "Post-FX and Lighting",
+  "zh": "后期特效与光照",
+  "ja": "ポストエフェクトとライティング",
+  "ko": "포스트 FX와 조명",
+  "th": "โพสต์เอฟเฟกต์และแสง"
+ },
+ "reference/audio.md": {
+  "en": "Audio",
+  "zh": "音频",
+  "ja": "オーディオ",
+  "ko": "오디오",
+  "th": "เสียง"
+ },
+ "reference/music.md": {
+  "en": "Music",
+  "zh": "音乐",
+  "ja": "音楽",
+  "ko": "음악",
+  "th": "ดนตรี"
+ },
+ "reference/physics.md": {
+  "en": "Physics",
+  "zh": "物理",
+  "ja": "物理",
+  "ko": "물리",
+  "th": "ฟิสิกส์"
+ },
+ "reference/body.md": {
+  "en": "Acoustic Bodies",
+  "zh": "声学物体",
+  "ja": "音響ボディ",
+  "ko": "음향 바디",
+  "th": "วัตถุเสียง"
+ },
+ "reference/input.md": {
+  "en": "Input and Microphone",
+  "zh": "输入与麦克风",
+  "ja": "入力とマイク",
+  "ko": "입력과 마이크",
+  "th": "อินพุตและไมโครโฟน"
+ },
+ "reference/dialog.md": {
+  "en": "Dialog",
+  "zh": "对话",
+  "ja": "ダイアログ",
+  "ko": "대화",
+  "th": "บทสนทนา"
+ },
+ "reference/web.md": {
+  "en": "Web Server and HTTP",
+  "zh": "Web 服务器与 HTTP",
+  "ja": "Web サーバーと HTTP",
+  "ko": "웹 서버와 HTTP",
+  "th": "เว็บเซิร์ฟเวอร์และ HTTP"
+ },
+ "reference/database.md": {
+  "en": "Database (SQLite)",
+  "zh": "数据库（SQLite）",
+  "ja": "データベース（SQLite）",
+  "ko": "데이터베이스 (SQLite)",
+  "th": "ฐานข้อมูล (SQLite)"
+ },
+ "reference/networking.md": {
+  "en": "Networking",
+  "zh": "网络",
+  "ja": "ネットワーク",
+  "ko": "네트워킹",
+  "th": "เครือข่าย"
+ },
+ "reference/crypto.md": {
+  "en": "Cryptography",
+  "zh": "密码学",
+  "ja": "暗号",
+  "ko": "암호화",
+  "th": "การเข้ารหัส"
+ },
+ "reference/ai.md": {
+  "en": "AI and Language Models",
+  "zh": "AI 与语言模型",
+  "ja": "AI と言語モデル",
+  "ko": "AI와 언어 모델",
+  "th": "AI และโมเดลภาษา"
+ },
+ "tools/ling.md": {
+  "en": "The ling Command",
+  "zh": "ling 命令",
+  "ja": "ling コマンド",
+  "ko": "ling 명령",
+  "th": "คำสั่ง ling"
+ },
+ "tools/lingfu.md": {
+  "en": "lingfu",
+  "zh": "lingfu",
+  "ja": "lingfu",
+  "ko": "lingfu",
+  "th": "lingfu"
+ },
+ "tools/convert.md": {
+  "en": "Asset Conversion",
+  "zh": "资源转换",
+  "ja": "アセット変換",
+  "ko": "에셋 변환",
+  "th": "การแปลงแอสเซต"
+ },
+ "crates/index.md": {
+  "en": "Crate Overview",
+  "zh": "Crate 概览",
+  "ja": "クレート概要",
+  "ko": "크레이트 개요",
+  "th": "ภาพรวม Crate"
+ },
+ "crates/web.md": {
+  "en": "ling-http and ling-web",
+  "zh": "ling-http 与 ling-web",
+  "ja": "ling-http と ling-web",
+  "ko": "ling-http와 ling-web",
+  "th": "ling-http และ ling-web"
+ },
+ "glossary/index.md": {
+  "en": "Overview",
+  "zh": "概览",
+  "ja": "概要",
+  "ko": "개요",
+  "th": "ภาพรวม"
+ },
+ "glossary/keywords.md": {
+  "en": "Keywords",
+  "zh": "关键字",
+  "ja": "キーワード",
+  "ko": "키워드",
+  "th": "คำสงวน"
+ },
+ "glossary/types.md": {
+  "en": "Types",
+  "zh": "类型",
+  "ja": "型",
+  "ko": "타입",
+  "th": "ชนิดข้อมูล"
+ },
+ "glossary/literals.md": {
+  "en": "Literals and Operators",
+  "zh": "字面量与运算符",
+  "ja": "リテラルと演算子",
+  "ko": "리터럴과 연산자",
+  "th": "ค่าคงที่และตัวดำเนินการ"
+ },
+ "glossary/builtins.md": {
+  "en": "Builtins by Crate",
+  "zh": "按 Crate 分类的内置函数",
+  "ja": "クレート別組み込み関数",
+  "ko": "크레이트별 내장 함수",
+  "th": "ฟังก์ชันในตัวตาม Crate"
+ },
+ "examples/dao-chamber.md": {
+  "en": "道场 — Shrine Room",
+  "zh": "道场 — 神殿房间",
+  "ja": "道場 — 社の部屋",
+  "ko": "도장 — 신전 방",
+  "th": "道场 — ห้องศาลเจ้า"
+ },
+ "examples/garden.md": {
+  "en": "Garden",
+  "zh": "花园",
+  "ja": "庭園",
+  "ko": "정원",
+  "th": "สวน"
+ },
+ "examples/hyperbolic-world.md": {
+  "en": "Hyperbolic World (H²×ℝ)",
+  "zh": "双曲世界（H²×ℝ）",
+  "ja": "双曲世界（H²×ℝ）",
+  "ko": "쌍곡 세계 (H²×ℝ)",
+  "th": "โลกไฮเพอร์โบลิก (H²×ℝ)"
+ },
+ "examples/hyperbolic-3d.md": {
+  "en": "Hyperbolic 3D",
+  "zh": "双曲 3D",
+  "ja": "双曲 3D",
+  "ko": "쌍곡 3D",
+  "th": "ไฮเพอร์โบลิก 3 มิติ"
+ }
+}

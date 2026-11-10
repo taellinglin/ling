@@ -1859,3 +1859,25 @@ pub fn held_report() -> [u8; 8] {
     poll();
     unsafe { HELD }
 }
+
+/// Forget all keyboard state at a session boundary (sign-in / run app / log
+/// out): empty the decoded-byte queue, zero the held report, and reset every
+/// keyboard endpoint's edge-detection `prev` to a cleared report. Without
+/// this a key-down whose key-up was lost during a teardown window stays
+/// "held" and its character repeats into the next field; and leftover decoded
+/// bytes replay into it. The next real report re-establishes the true state.
+pub fn reset_key_state() {
+    unsafe {
+        KQ_HEAD = 0;
+        KQ_TAIL = 0;
+        HELD = [0; 8];
+        let ctls = &mut *(&raw mut CTLS);
+        for ctl in ctls.iter_mut().flatten() {
+            for h in ctl.hids.iter_mut().flatten() {
+                if h.kind == HidKind::Kbd {
+                    h.prev = [0; 8];
+                }
+            }
+        }
+    }
+}

@@ -286,67 +286,172 @@ fn pump() {
     }
 }
 
-/// out[t * rows + r] = row r of `w` . vector t of `x`, for every t in the batch
-pub fn matmul(w: &QTensor, x: &mut XBatch, out: &mut [f32]) {
-    debug_assert_eq!(x.n, w.cols);
-    let b = x.b;
-    let rows = w.rows;
+/// A way to run `f(ctx, 0) .. f(ctx, n-1)` on several cores and return when all are done (see [`set_parallel`]).
+pub type ParFn = fn(n: usize, ctx: *const (), f: unsafe fn(*const (), usize));
+
+static PAR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Let [`matmul`] spread its rows over several cores. The jobs never allocate and never call the yield function (that runs
+/// between groups of rows, on the calling core), so a kernel's worker cores can run them. Unset, everything runs in order.
+pub fn set_parallel(f: ParFn) {
+    PAR.store(f as usize, core::sync::atomic::Ordering::Relaxed);
+}
+
+unsafe fn par_tramp<F: Fn(usize) + Sync>(ctx: *const (), i: usize) {
+    (*(ctx as *const F))(i)
+}
+
+fn par_for<F: Fn(usize) + Sync>(n: usize, f: &F) {
+    let p = PAR.load(core::sync::atomic::Ordering::Relaxed);
+    if p == 0 || n <= 1 {
+        for i in 0..n {
+            f(i);
+        }
+        return;
+    }
+    // SAFETY: only `set_parallel` stores here, and it stores a `ParFn`
+    let pf: ParFn = unsafe { core::mem::transmute(p) };
+    pf(n, f as *const F as *const (), par_tramp::<F>);
+}
+
+/// The output buffer shared by the row jobs: each job writes only its own rows.
+struct OutPtr(*mut f32);
+unsafe impl Sync for OutPtr {}
+impl OutPtr {
+    #[inline]
+    unsafe fn put(&self, i: usize, v: f32) {
+        *self.0.add(i) = v;
+    }
+}
+
+/// Rows per job, and rows between two calls of the yield function.
+const ROWS_PER_JOB: usize = 16;
+const ROWS_PER_GROUP: usize = 512;
+
+/// Row `r` of `w` . every vector of the batch, into `out[t * rows + r]` -- without allocating.
+fn row_products(w: &QTensor, x: &XBatch, r: usize, out: &OutPtr) {
+    let (b, rows, row) = (x.b, w.rows, w.row(r));
     match w.dtype {
         DType::Q8_0 => {
-            x.quantize();
             let nb = w.cols / 32;
-            for r in 0..rows {
-                if r & 31 == 31 {
-                    pump();
-                }
-                let row = w.row(r);
-                for t in 0..b {
-                    out[t * rows + r] = dot_q8_0(row, &x.q[t * x.n..(t + 1) * x.n], &x.d[t * nb..(t + 1) * nb]);
-                }
+            for t in 0..b {
+                let v = dot_q8_0(row, &x.q[t * x.n..(t + 1) * x.n], &x.d[t * nb..(t + 1) * nb]);
+                unsafe { out.put(t * rows + r, v) };
             }
         }
-        DType::F32 => {
-            let mut tmp = vec![0.0f32; w.cols];
-            for r in 0..rows {
-                if r & 31 == 31 {
-                    pump();
+        DType::F32 | DType::F16 => {
+            for t in 0..b {
+                let xv = x.vec(t);
+                let mut acc = 0.0f32;
+                for (i, xi) in xv.iter().enumerate().take(w.cols) {
+                    let wi = if w.dtype == DType::F32 {
+                        f32::from_le_bytes([row[i * 4], row[i * 4 + 1], row[i * 4 + 2], row[i * 4 + 3]])
+                    } else {
+                        f16::to_f32(u16::from_le_bytes([row[i * 2], row[i * 2 + 1]]))
+                    };
+                    acc += wi * xi;
                 }
-                w.dequant_row(r, &mut tmp);
-                for t in 0..b {
-                    out[t * rows + r] = dot_f32(&tmp, x.vec(t));
-                }
-            }
-        }
-        DType::F16 => {
-            let mut tmp = vec![0.0f32; w.cols];
-            for r in 0..rows {
-                if r & 31 == 31 {
-                    pump();
-                }
-                w.dequant_row(r, &mut tmp);
-                for t in 0..b {
-                    out[t * rows + r] = dot_f32(&tmp, x.vec(t));
-                }
+                unsafe { out.put(t * rows + r, acc) };
             }
         }
         DType::Q4K | DType::Q6K => {
-            let mut tmp = vec![0.0f32; w.cols];
-            for r in 0..rows {
-                if r & 31 == 31 {
-                    pump();
+            // one 256-value block at a time on the stack; every vector of the batch takes its share of it
+            const MAXB: usize = 64;
+            let mut tmp = [0.0f32; 256];
+            if b <= MAXB {
+                let mut acc = [0.0f32; MAXB];
+                for blk in 0..w.cols / 256 {
+                    if w.dtype == DType::Q4K {
+                        dequant_q4k(&row[blk * 144..blk * 144 + 144], &mut tmp);
+                    } else {
+                        dequant_q6k(&row[blk * 210..blk * 210 + 210], &mut tmp);
+                    }
+                    for (t, a) in acc.iter_mut().enumerate().take(b) {
+                        *a += dot_f32(&tmp, &x.vec(t)[blk * 256..blk * 256 + 256]);
+                    }
                 }
-                w.dequant_row(r, &mut tmp);
+                for (t, a) in acc.iter().enumerate().take(b) {
+                    unsafe { out.put(t * rows + r, *a) };
+                }
+            } else {
                 for t in 0..b {
-                    out[t * rows + r] = dot_f32(&tmp, x.vec(t));
+                    let mut a = 0.0f32;
+                    for blk in 0..w.cols / 256 {
+                        if w.dtype == DType::Q4K {
+                            dequant_q4k(&row[blk * 144..blk * 144 + 144], &mut tmp);
+                        } else {
+                            dequant_q6k(&row[blk * 210..blk * 210 + 210], &mut tmp);
+                        }
+                        a += dot_f32(&tmp, &x.vec(t)[blk * 256..blk * 256 + 256]);
+                    }
+                    unsafe { out.put(t * rows + r, a) };
                 }
             }
         }
     }
 }
 
+/// out[t * rows + r] = row r of `w` . vector t of `x`, for every t in the batch. Rows are spread over the cores
+/// [`set_parallel`] offers, a group at a time, with the yield function called between groups.
+pub fn matmul(w: &QTensor, x: &mut XBatch, out: &mut [f32]) {
+    debug_assert_eq!(x.n, w.cols);
+    let rows = w.rows;
+    assert!(out.len() >= x.b * rows);
+    if w.dtype == DType::Q8_0 {
+        x.quantize();
+    }
+    let x: &XBatch = x;
+    let outp = OutPtr(out.as_mut_ptr());
+    let mut g0 = 0;
+    while g0 < rows {
+        pump();
+        let g1 = (g0 + ROWS_PER_GROUP).min(rows);
+        let jobs = (g1 - g0).div_ceil(ROWS_PER_JOB);
+        par_for(jobs, &|j: usize| {
+            let r0 = g0 + j * ROWS_PER_JOB;
+            for r in r0..(r0 + ROWS_PER_JOB).min(g1) {
+                row_products(w, x, r, &outp);
+            }
+        });
+        g0 = g1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// runs the jobs last-to-first, the way a pool of cores may finish them
+    fn reversed(n: usize, ctx: *const (), f: unsafe fn(*const (), usize)) {
+        for i in (0..n).rev() {
+            unsafe { f(ctx, i) };
+        }
+    }
+
+    #[test]
+    fn parallel_rows_give_the_same_products() {
+        // 700 rows: two groups and many jobs, the last one short
+        let (rows, cols) = (700usize, 64usize);
+        let mut bytes = Vec::new();
+        for i in 0..rows * cols {
+            bytes.extend((((i * 31 % 97) as f32 - 48.0) / 19.0).to_le_bytes());
+        }
+        let t = QTensor::load(&bytes.as_slice(), 0, rows, cols, DType::F32).unwrap();
+        let mut x = XBatch::new(2, cols);
+        for k in 0..2 {
+            for (i, v) in x.vec_mut(k).iter_mut().enumerate() {
+                *v = ((i * (k + 5) % 23) as f32 - 11.0) / 6.0;
+            }
+        }
+        x.set_len(2);
+        let mut serial = vec![0.0f32; 2 * rows];
+        matmul(&t, &mut x, &mut serial);
+        set_parallel(reversed);
+        let mut par = vec![0.0f32; 2 * rows];
+        matmul(&t, &mut x, &mut par);
+        PAR.store(0, core::sync::atomic::Ordering::Relaxed);
+        assert_eq!(serial, par);
+    }
 
     #[test]
     fn q8_0_matmul_matches_the_f32_product_closely() {

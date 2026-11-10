@@ -68,13 +68,35 @@ extern "C" {
     fn ling_switch_stack(save: *mut u64, to: u64);
 }
 
+/// Coroutines live inside the scheduler's main task. A coroutine that calls `sched::yield_now` (every `poll_until` does)
+/// lets a background task (the SSH server, the chat listener) run while `CUR` still names the coroutine: that task must
+/// see no coroutine at all, or its own coroutine-aware waits would switch stacks under the coroutine's name and resume
+/// the wrong stack later (seen as an app whose window "closed" by itself after a background network job).
+#[inline]
+fn on_main_task() -> bool {
+    crate::proc::sched::is_main()
+}
+
 /// Is a coroutine (not main) running?
 pub fn in_coro() -> bool {
-    unsafe { CUR.is_some() }
+    let cur = unsafe { CUR.is_some() };
+    cur && on_main_task()
+}
+
+/// A cooperative-task identity that tells green threads apart: the scheduler
+/// task (pid) in the high bits, the running coroutine's id (0 = main) low.
+/// The pid alone aliases every coroutine with main (they run inside main's
+/// scheduler task), which made the re-entrant net/fs locks pass straight
+/// through between a coroutine and main.
+pub fn task_key() -> i64 {
+    ((crate::proc::sched::getpid() as i64) << 32) | (current() as i64 & 0xFFFF_FFFF)
 }
 
 /// The running coroutine's id (0 = main).
 pub fn current() -> u64 {
+    if !on_main_task() {
+        return 0;
+    }
     unsafe { CUR.map(|i| coros()[i].id).unwrap_or(0) }
 }
 
@@ -131,6 +153,10 @@ pub fn spawn_owned(name: &str, isolate: bool, owner: &str, f: Box<dyn FnOnce()>)
 /// From main: runs each coroutine in turn until it yields back. From a
 /// coroutine: switches to the next one (main included).
 pub fn yield_now() {
+    // only the main task runs coroutines (see on_main_task)
+    if !on_main_task() {
+        return;
+    }
     reap();
     if coros().is_empty() {
         return;
@@ -171,6 +197,12 @@ pub fn yield_now() {
 /// until the time is up.
 pub fn sleep_ms(ms: u64) {
     let end = crate::arch::timer::now_ms() + ms;
+    if !on_main_task() {
+        while crate::arch::timer::now_ms() < end {
+            crate::proc::sched::yield_now();
+        }
+        return;
+    }
     if let Some(i) = unsafe { CUR } {
         coros()[i].wake_ms = end;
     }

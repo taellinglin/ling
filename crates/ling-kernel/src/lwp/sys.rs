@@ -12,28 +12,9 @@ pub fn now_ms() -> u64 {
 
 /// Seconds since the Unix epoch (ban expiry, address-book timestamps).
 pub fn unix_now() -> u64 {
-    #[cfg(target_arch = "x86_64")]
     {
-        crate::arch::rtc::unix_timestamp().max(0) as u64
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        // The Pi 5's firmware RTC, read once and carried forward on the
-        // monotonic clock; boards without one count from a fixed 2026 epoch
-        // (bans then still expire after the right number of seconds).
-        static mut BASE: Option<u64> = None;
-        let base = unsafe {
-            match *(&raw const BASE) {
-                Some(b) => b,
-                None => {
-                    let rtc = crate::arch::mailbox::rtc_time().map(|t| t as u64).unwrap_or(1_767_225_600);
-                    let b = rtc.saturating_sub(now_ms() / 1000);
-                    *(&raw mut BASE) = Some(b);
-                    b
-                },
-            }
-        };
-        base + now_ms() / 1000
+        // network time, else the board clock, never before this build
+        crate::clock::unix_now()
     }
 }
 

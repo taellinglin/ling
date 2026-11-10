@@ -215,10 +215,86 @@ pub fn init() {
         let cr0 = cpu::read_cr0();
         cpu::write_cr0(cr0 | (1 << 16));
     }
+    // a framebuffer above 4 GiB (UEFI with a discrete GPU) was mapped in the
+    // boot tables only: map it here too, write-combining
+    if let Some(fb) = crate::drivers::framebuffer::get() {
+        let len = fb.pitch as u64 * fb.height as u64;
+        if fb.addr + len > IDENTITY_LIMIT {
+            map_wc(fb.addr, len);
+        }
+    }
+}
+
+/// Identity-map [phys, phys+len) write-combining (PAT entry 1 via PWT, which
+/// `boot::set_pat_wc` programs): for framebuffers, where uncached writes are
+/// many times slower and write-back would leave pixels sitting in the cache.
+pub fn map_wc(phys: u64, len: u64) {
+    let end = phys + len;
+    let mut page = phys & !(PAGE_SIZE - 1);
+    let pml4 = unsafe { KERNEL_PML4 };
+    while page < end {
+        map4k(pml4, page, page, WRITABLE | NX | PWT);
+        invlpg(page);
+        page += PAGE_SIZE;
+    }
 }
 
 pub fn kernel_pml4() -> u64 {
     unsafe { KERNEL_PML4 }
+}
+
+/// Page-level cache disable + write-through: device registers must not be cached.
+pub const PCD: u64 = 1 << 4;
+pub const PWT: u64 = 1 << 3;
+
+/// Make a device's register window usable at its own physical address and
+/// return that address. Below 4 GiB the boot identity map already covers it
+/// (firmware's MTRRs keep PCI windows uncached there); above 4 GiB -- where
+/// UEFI firmware on many boards puts 64-bit BARs (the Z590's xHCI, Wi-Fi and
+/// audio sit at 0x40_1210_0000+) -- it is identity-mapped here in 4 KiB pages,
+/// uncached, no-execute. The kernel PML4's low slot is shared by every
+/// address space, so the mapping is visible everywhere at once. Call on the
+/// boot core (page tables come from the frame allocator). None above the
+/// 512 GiB the low PML4 slot spans.
+pub fn map_mmio(phys: u64, len: u64) -> Option<u64> {
+    if len == 0 {
+        return Some(phys);
+    }
+    let end = phys.checked_add(len)?;
+    if end <= IDENTITY_LIMIT {
+        return Some(phys);
+    }
+    if end > 1 << 39 || unsafe { KERNEL_PML4 } == 0 {
+        return None;
+    }
+    let mut page = phys & !(PAGE_SIZE - 1);
+    while page < end {
+        if walk_leaf(unsafe { KERNEL_PML4 }, page).is_none() {
+            map4k(unsafe { KERNEL_PML4 }, page, page, WRITABLE | NX | PCD | PWT);
+        }
+        page += PAGE_SIZE;
+    }
+    Some(phys)
+}
+
+/// Identity-map RAM above 4 GiB, write-back, no-execute, in 2 MiB pages (`phys` and `len` 2 MiB aligned): the high-memory
+/// pool's blocks (`mm::highmem`). Boot core only; false outside [4 GiB, 512 GiB) or before the kernel tables exist.
+pub fn map_ram_high(phys: u64, len: u64) -> bool {
+    let end = match phys.checked_add(len) {
+        Some(e) => e,
+        None => return false,
+    };
+    if phys < IDENTITY_LIMIT || end > 1 << 39 || phys % HUGE_PAGE_SIZE != 0 || len % HUGE_PAGE_SIZE != 0 || unsafe { KERNEL_PML4 } == 0 {
+        return false;
+    }
+    let mut a = phys;
+    while a < end {
+        if walk_leaf(unsafe { KERNEL_PML4 }, a).is_none() {
+            map2m(unsafe { KERNEL_PML4 }, a, a, WRITABLE | NX);
+        }
+        a += HUGE_PAGE_SIZE;
+    }
+    true
 }
 
 /// A fresh address space for a new process: its own PML4, sharing the

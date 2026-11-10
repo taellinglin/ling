@@ -36,6 +36,96 @@ pub struct CameraParams {
     pub tz: f32, // camera world position
 }
 
+/// The parts of `ling::gfx::camera::Camera3D` that [`CameraParams`] leaves out:
+/// view roll and the hyperbolic warp (`set_camera_hyper`). Kept separate so the
+/// existing `CameraParams { .. }` literals stay valid. `hyp_r <= 0` = no warp.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ViewWarp {
+    pub crz: f32,
+    pub srz: f32, // cos/sin roll
+    pub hyp_r: f32,
+    pub hyp_s: f32,
+    pub hx: f32,
+    pub hy: f32,
+    pub hz: f32, // warp pivot
+}
+
+impl Default for ViewWarp {
+    fn default() -> Self {
+        ViewWarp { crz: 1.0, srz: 0.0, hyp_r: 0.0, hyp_s: 0.0, hx: 0.0, hy: 0.0, hz: 0.0 }
+    }
+}
+
+impl ViewWarp {
+    /// True when neither roll nor the hyperbolic warp is active, i.e. plain
+    /// [`Backend::project_points`] gives the same answer.
+    pub fn is_identity(&self) -> bool {
+        self.hyp_r <= 0.0 && self.srz == 0.0
+    }
+}
+
+/// The hyperbolic warp of one world point — the exact CPU twin of
+/// `Camera3D::hyper` (and of the `project_points_warped` CUDA kernel): a point
+/// `d` from the pivot across the ground is pulled in to `R·tanh(d/R)`, the
+/// ground bends into a saddle, and the warp fades out behind the lens and
+/// outside a 1.8× view cone so nothing folds between the eye and the scene.
+#[inline]
+pub fn hyper_warp(cam: &CameraParams, w: &ViewWarp, wx: f32, wy: f32, wz: f32) -> (f32, f32, f32) {
+    if w.hyp_r <= 0.0 {
+        return (wx, wy, wz);
+    }
+    let (vx, vy, vz) = (wx - cam.tx, wy - cam.ty, wz - cam.tz);
+    let qx = vx * cam.cry - vz * cam.sry;
+    let qz1 = vx * cam.sry + vz * cam.cry;
+    let qy = vy * cam.crx - qz1 * cam.srx;
+    let qz = vy * cam.srx + qz1 * cam.crx;
+    let eye = qz + cam.zdist;
+    let k_front = ((eye - 1.0) / 6.0).clamp(0.0, 1.0);
+    if k_front <= 0.0 {
+        return (wx, wy, wz);
+    }
+    let tan_h = (cam.cx / cam.focal.max(1.0)).max(0.05);
+    let lim = 1.8 * eye.max(0.1) * tan_h;
+    if qx * qx + qy * qy >= lim * lim {
+        return (wx, wy, wz);
+    }
+    let q = (qx * qx + qy * qy).sqrt() / (eye.max(0.1) * tan_h);
+    let k = k_front * ((1.8 - q) / 0.6).clamp(0.0, 1.0);
+    if k <= 0.0 {
+        return (wx, wy, wz);
+    }
+    let (mut dx, mut dz) = (wx - w.hx, wz - w.hz);
+    let d = (dx * dx + dz * dz).sqrt();
+    if d > 1e-4 {
+        let s = w.hyp_r * (d / w.hyp_r).tanh() / d;
+        dx *= s;
+        dz *= s;
+    }
+    let u = dx * cam.cry - dz * cam.sry;
+    let v = dx * cam.sry + dz * cam.cry;
+    let raw = w.hyp_s * (v * v - u * u) / w.hyp_r;
+    let f = ((wy - w.hy) / 12.0).clamp(-1.0, 1.0);
+    let wy2 = wy + 9.0 * (raw / 9.0).tanh() * f;
+    (wx + (w.hx + dx - wx) * k, wy + (wy2 - wy) * k, wz + (w.hz + dz - wz) * k)
+}
+
+/// Full projection of one point (warp → translate → yaw → pitch → roll →
+/// perspective) → (screen x, screen y, camera depth). CPU twin of
+/// `Camera3D::project`.
+#[inline]
+pub fn project_warped(cam: &CameraParams, w: &ViewWarp, wx: f32, wy: f32, wz: f32) -> (f32, f32, f32) {
+    let (wx, wy, wz) = hyper_warp(cam, w, wx, wy, wz);
+    let (wx, wy, wz) = (wx - cam.tx, wy - cam.ty, wz - cam.tz);
+    let rx = wx * cam.cry - wz * cam.sry;
+    let rz1 = wx * cam.sry + wz * cam.cry;
+    let ry = wy * cam.crx - rz1 * cam.srx;
+    let rz = wy * cam.srx + rz1 * cam.crx;
+    let (rx, ry) = (rx * w.crz - ry * w.srz, rx * w.srz + ry * w.crz);
+    let d = rz + cam.zdist;
+    (cam.cx + cam.focal * rx / d, cam.cy + cam.focal * ry / d, rz)
+}
+
 /// One frame of flat-coloured triangles for [`Backend::raster_tris`] (used by the LingModeler viewport).
 #[derive(Clone, Copy)]
 pub struct RasterScene<'a> {
@@ -73,6 +163,12 @@ pub trait Backend: Send + Sync {
     /// Batch perspective projection. `world` is interleaved xyz (len `3*n`);
     /// `out` receives interleaved (screen_x, screen_y, camera_depth) (len `3*n`).
     fn project_points(&self, world: &[f32], cam: &CameraParams, out: &mut [f32]);
+
+    /// [`Self::project_points`] with view roll and the hyperbolic warp applied
+    /// (see [`ViewWarp`], [`project_warped`]). Default: data-parallel CPU.
+    fn project_points_warped(&self, world: &[f32], cam: &CameraParams, warp: &ViewWarp, out: &mut [f32]) {
+        cpu::project_warped_cpu(world, cam, warp, out);
+    }
 
     /// Depth-buffered triangle rasterisation. `out` (len `width*height`) receives `0xFF000000 | rgb` for every pixel a
     /// triangle covers (the nearest one, by 1/depth) and `0` where nothing was drawn. Exact z-buffer: faces of
@@ -124,6 +220,13 @@ pub fn backend() -> &'static dyn Backend {
         Box::new(cpu::CpuBackend::new()) as Box<dyn Backend>
     });
     &**b
+}
+
+/// The always-available CPU backend (rayon), regardless of any GPU — for
+/// benchmarks and for work too small to be worth a PCIe round trip.
+pub fn cpu_backend() -> &'static dyn Backend {
+    static C: OnceLock<cpu::CpuBackend> = OnceLock::new();
+    C.get_or_init(cpu::CpuBackend::new)
 }
 
 /// Convenience: the active device's name (for logging / `--version` banners).
@@ -195,6 +298,52 @@ mod tests {
             "sy = focal*y/d = 100*2/5 = 40"
         );
         assert!((out[2] - 0.0).abs() < 1e-6, "depth rz = 0");
+    }
+
+    fn test_cam() -> (CameraParams, ViewWarp) {
+        let (a, b, r) = (0.6f32, 0.3f32, 0.1f32);
+        let cam = CameraParams {
+            cry: a.cos(), sry: a.sin(), crx: b.cos(), srx: b.sin(),
+            cx: 960.0, cy: 540.0, focal: 1080.0, zdist: 5.0, tx: 1.0, ty: -2.0, tz: -6.0,
+        };
+        let warp = ViewWarp { crz: r.cos(), srz: r.sin(), hyp_r: 8.0, hyp_s: 0.6, hx: 0.5, hy: 1.0, hz: 2.0 };
+        (cam, warp)
+    }
+
+    #[test]
+    fn warped_backend_matches_scalar_reference() {
+        // 100k points: over the CUDA crossover, so on a CUDA build this checks
+        // the device kernel against the CPU twin; elsewhere the rayon path.
+        let (cam, warp) = test_cam();
+        let n = 100_000usize;
+        let world: Vec<f32> = (0..3 * n).map(|i| ((i as f32 * 0.618_034).fract() - 0.5) * 30.0).collect();
+        let mut out = vec![0f32; 3 * n];
+        backend().project_points_warped(&world, &cam, &warp, &mut out);
+        let mut warped = 0usize;
+        for i in 0..n {
+            let (sx, sy, sz) = project_warped(&cam, &warp, world[3 * i], world[3 * i + 1], world[3 * i + 2]);
+            let (px, py, pz) = (out[3 * i], out[3 * i + 1], out[3 * i + 2]);
+            // points right at the eye plane blow up; compare relatively
+            let tol = |r: f32| 1e-3 * r.abs().max(1.0) + 2e-3;
+            assert!((sx - px).abs() <= tol(sx) && (sy - py).abs() <= tol(sy) && (sz - pz).abs() <= tol(sz),
+                "point {i}: cpu ({sx},{sy},{sz}) vs backend ({px},{py},{pz})");
+            if hyper_warp(&cam, &warp, world[3 * i], world[3 * i + 1], world[3 * i + 2]) != (world[3 * i], world[3 * i + 1], world[3 * i + 2]) {
+                warped += 1;
+            }
+        }
+        assert!(warped > n / 20, "test camera should actually warp a good share of points ({warped})");
+    }
+
+    #[test]
+    fn identity_warp_equals_plain_projection() {
+        let (cam, _) = test_cam();
+        let world: Vec<f32> = (0..3000).map(|i| ((i as f32 * 0.37).sin()) * 9.0).collect();
+        let (mut a, mut b) = (vec![0f32; 3000], vec![0f32; 3000]);
+        backend().project_points(&world, &cam, &mut a);
+        cpu::project_warped_cpu(&world, &cam, &ViewWarp::default(), &mut b);
+        for (x, y) in a.iter().zip(&b) {
+            assert!((x - y).abs() <= 1e-3 * x.abs().max(1.0), "{x} vs {y}");
+        }
     }
 
     // ── Multi-GPU partition logic ────────────────────────────────────────────

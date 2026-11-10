@@ -40,6 +40,11 @@ const EXT_PGDN: u8 = 0x51;
 /// Applications-menu launcher — the keyboard path to opening apps that the
 /// mouse-only dock/menu never had.
 const EXT_SUPER: u8 = 0x5B;
+/// Print Screen: `E0 2A E0 37` on a PS/2 keyboard (the `E0 2A` fake-shift half
+/// falls through the extended branch as an unknown key, so it never reads as
+/// Shift), plain `E0 37` from QEMU's `sendkey print` and from xhci.rs (HID
+/// usage 0x46). Its release (`E0 B7 E0 AA`) is ignored like every release.
+const EXT_PRTSC: u8 = 0x37;
 pub const UP_ARROW: u8 = 0x11;
 pub const DOWN_ARROW: u8 = 0x12;
 pub const LEFT_ARROW: u8 = 0x13;
@@ -53,6 +58,9 @@ pub const PGDN_KEY: u8 = 0x18;
 /// The Super/GUI key, reported as the next free DC-range control code. The
 /// desktop treats it as "open the Applications menu".
 pub const SUPER_KEY: u8 = 0x19;
+/// Print Screen, the next free DC-range code: the desktop opens the screenshot
+/// overlay (drivers/screenshot.rs) on it.
+pub const PRTSC_KEY: u8 = 0x1A;
 
 // Ctrl-chords, reported in a dedicated 0x80+ range: raw ASCII control
 // codes (letter & 0x1F) would collide with the arrows above (Ctrl+Q/R/S/T
@@ -117,6 +125,21 @@ static mut IDLE_FIRED: bool = false;
 /// this is the best fix available without reproducing the exact PS/2
 /// resync behavior VirtualBox's host-focus handling triggers.
 const FOCUS_LOSS_GAP_MS: u64 = 2_000;
+
+/// Drop every unread scancode and clear modifier/sequence state. Called at a
+/// session boundary (the sign-in field gaining focus, log out) so a buffered
+/// typematic burst or a half-read extended sequence from before can't replay
+/// into the password box. Unlike `reset_stale_modifier_state`, this is
+/// unconditional -- the caller knows a boundary was crossed.
+pub fn drain() {
+    unsafe {
+        RING_TAIL = RING_HEAD;
+        PENDING_EXTENDED = false;
+        CTRL_DOWN = false;
+        SHIFT_DOWN = false;
+    }
+    crate::arch::xhci::reset_key_state();
+}
 
 /// Reset modifier/sequence state if it's been stale long enough that
 /// trusting it would misinterpret the next scancode. Call before processing
@@ -218,6 +241,8 @@ fn lookup_ascii(code: u8) -> u8 {
 /// Non-blocking scancode read from the IRQ-fed ring buffer. Returns `None`
 /// if nothing is waiting.
 fn read_scancode() -> Option<u8> {
+    // USB keyboards/mice (polled xHCI): their reports land in this ring as scancodes
+    crate::arch::xhci::service();
     unsafe {
         if RING_HEAD == RING_TAIL {
             return None;
@@ -385,7 +410,11 @@ pub fn poll_char() -> u8 {
                 unsafe {
                     PENDING_EXTENDED = true;
                 }
-                return 0;
+                // Read its second byte in the same call: loops that take one
+                // key per frame otherwise split the pair across a frame, and a
+                // frame slower than FOCUS_LOSS_GAP_MS (a first-frame disk
+                // seed) dropped the prefix -- PrtSc then typed a keypad '*'.
+                return poll_char();
             }
             if unsafe { PENDING_EXTENDED } {
                 unsafe {
@@ -417,6 +446,9 @@ pub fn poll_char() -> u8 {
                 }
                 if code == EXT_SUPER {
                     return SUPER_KEY;
+                }
+                if code == EXT_PRTSC {
+                    return PRTSC_KEY;
                 }
                 return 0;
             }

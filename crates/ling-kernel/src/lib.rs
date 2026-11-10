@@ -40,6 +40,15 @@ pub mod codec;
 pub mod tls;
 pub mod ed25519;
 pub mod hash;
+// Horizon's first-party cookie jar and the shared credential store (both sealed through the keyring).
+pub mod cookies;
+pub mod creds;
+pub mod modes;
+pub mod motd;
+pub mod prof;
+// Parallel pixel work over the other CPU cores (x86-64 SMP; serial on the Pi).
+pub mod par;
+pub mod remote;
 // Boot-time service configuration (SSH-at-boot prompt + persistence).
 #[cfg(target_arch = "x86_64")]
 pub mod services;
@@ -71,6 +80,8 @@ pub mod lingrt;
 pub mod lingrec;
 /// Green threads (coroutines) for Ling isolates and Rust workers.
 pub mod coro;
+/// Wall-clock time: network (SNTP), board clock, build-date floor.
+pub mod clock;
 /// LWP-1, Ling Wallet's peer-to-peer transport (handshake, frames, peers).
 pub mod lwp;
 /// The `p2p_*` builtins over `lwp`.
@@ -88,12 +99,20 @@ pub mod dbrt;
 // App builtins for compiled programs (window, px_* drawing, fonts, input, files)
 // and the read-only files `ling build` bakes into the image ([includes]).
 pub mod lingapp;
+// Live counters (net/disk bytes, task switches, RAM total) for the system monitor.
+pub mod kstats;
+// Host-runtime builtins lingapp lacked (grad_rect, font_text_px, read_file_bytes,
+// list_dir, named pad buttons, audio_tone, emu_* = none) -- Ling Arcade on LingOS.
+pub mod hostcompat;
 pub mod appfs;
 // Files for programs: lingfs in front of appfs, per-program data roots.
 pub mod vfs;
 pub mod keyring;
+pub mod vault;
 // Networking builtins for programs (net_*, http_*) over the netstack.
 pub mod netapi;
+// Host builtins larger programs need (animation drivers, string helpers, localized names).
+pub mod compat;
 pub mod wifi;
 // LingStationX's daw_* builtins: the project model (project.json), transport.
 pub mod lingdaw;
@@ -163,6 +182,7 @@ pub fn init() {
         // `isr_spurious`), and the mouse's synchronous 8042 handshake before
         // IRQ12 is unmasked (see `mouse::init`'s doc comment for why the
         // order matters there specifically).
+        arch::boot::stack_guard_arm();
         arch::gdt::init(arch::boot::boot_stack_top());
         arch::idt::init();
         arch::pic::init();
@@ -197,6 +217,14 @@ pub fn init() {
         // Establish the shell as slot 0 of the cooperative scheduler before
         // anything (a shell command, `ling_kernel_spawn`) can depend on it.
         sched::init_main_task();
+
+        // The other cores, as a worker pool for pixel work (3-D bands, frame
+        // scaling / copies). Needs paging, the GDT/IDT and the heap.
+        arch::smp::init();
+
+        // USB keyboards, mice and flash drives: take each xHCI controller from
+        // the firmware (legacy-USB handoff) and enumerate what is plugged in.
+        arch::xhci::init();
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -213,7 +241,9 @@ pub fn init() {
         // output path (no serial without the debug-UART cable), and it comes up
         // before the Pi 3-only interrupt wiring (skipped on Pi 5) as first life.
         crate::drivers::framebuffer::init();
-        rpi_boot_screen();
+        // the boot screen's dark ground at once (it paints itself once the
+        // heap is up); the purple banner is only the console's backdrop now
+        crate::drivers::framebuffer::clear_physical(0x040407);
         crate::drivers::fbcon::init();
 
         console_write(b"ling-kernel initialized\n");
@@ -297,6 +327,9 @@ pub fn init() {
         // The cooperative task table: slot 0 is this boot stack; the SSH
         // server and the Messenger listener get their own 2 MiB stacks.
         sched::init_main_task();
+        // the animated boot screen (needs the heap): over the banner + console
+        // until the desktop, a console image's prompt or the setup wizard
+        crate::drivers::bootscreen::begin();
     }
 }
 
@@ -315,7 +348,7 @@ fn append_bytes(buf: &mut [u8], n: &mut usize, s: &[u8]) {
 }
 
 #[cfg(target_arch = "aarch64")]
-fn rpi_boot_screen() {
+pub(crate) fn rpi_boot_screen() {
     use crate::drivers::{font8x8, framebuffer};
     let Some(fb) = framebuffer::get() else { return };
     let w = fb.width;
@@ -379,7 +412,15 @@ pub(crate) fn console_write(bytes: &[u8]) {
     #[cfg(target_arch = "aarch64")]
     {
         crate::drivers::uart::write(bytes); // serial (UART0 on Pi 3/4, debug UART10 on Pi 5)
-        crate::drivers::fbcon::write(bytes); // HDMI framebuffer console
+        if !crate::drivers::bootscreen::active() {
+            crate::drivers::fbcon::write(bytes); // HDMI framebuffer console
+        }
+    }
+    // while the boot screen is up, console lines are its live data
+    if crate::drivers::bootscreen::active() {
+        #[cfg(target_arch = "aarch64")]
+        crate::drivers::bootscreen::feed(bytes);
+        crate::drivers::bootscreen::tick();
     }
 }
 
@@ -514,6 +555,7 @@ pub fn panic_report(info: &core::panic::PanicInfo) -> ! {
 }
 
 fn crash(label: &[u8], msg: &str, loc: Option<(&str, u32)>) -> ! {
+    crate::drivers::bootscreen::end();
     #[cfg(target_arch = "aarch64")]
     {
         arch::hdmi_audio::stop();
@@ -586,6 +628,7 @@ pub(crate) fn poll_input() -> Option<u8> {
 /// console underneath it (the wizard owns the whole framebuffer while it runs).
 #[cfg(target_arch = "aarch64")]
 fn run_setup_wizard() {
+    crate::drivers::bootscreen::end();
     crate::setup::run();
     rpi_boot_screen();
     crate::drivers::fbcon::init();
@@ -629,11 +672,12 @@ pub(crate) fn app_names() -> alloc::vec::Vec<&'static str> {
 /// Desktop → Console: the text console full-screen until `exit`.
 #[cfg(target_arch = "aarch64")]
 pub(crate) fn desktop_console(first: &[u8]) {
+    crate::drivers::bootscreen::end();
     rpi_boot_screen();
     crate::drivers::fbcon::init();
     console_write(b"LingOS console -- type 'exit' to return to the desktop, 'help' for commands.\n");
     if !first.is_empty() {
-        console_write(b"lingos$ ");
+        rpi_prompt();
         console_write(first);
         console_write(b"\n");
         rpi_shell_exec(first);
@@ -646,6 +690,7 @@ pub(crate) fn desktop_console(first: &[u8]) {
 /// time), then back to the desktop.
 #[cfg(target_arch = "aarch64")]
 pub(crate) fn desktop_setup() {
+    crate::drivers::bootscreen::end();
     crate::setup::run();
     crate::drivers::fbcon::suspend();
 }
@@ -661,25 +706,33 @@ pub(crate) fn desktop_boot() {
         }
         DONE = true;
     }
+    use crate::drivers::bootscreen;
     console_write(b"LingOS aarch64 (Raspberry Pi) -- starting the desktop\n");
     crate::lingapp::register_builtin_home("ling");
+    bootscreen::stage(bootscreen::DRIVERS);
     arch::rp1::usb_probe();
+    bootscreen::stage(bootscreen::FILESYSTEM);
     storage_boot();
     crate::setup::mount_data_partition();
     crate::setup::check_password_reset();
+    bootscreen::stage(bootscreen::NETWORK);
     net_boot();
     crate::wifi::boot_autojoin();
     // HDMI audio: brought up at boot so LingStationX plays straight away;
     // the console's `hdmiaudio` repeats it verbosely with a test tone.
+    bootscreen::stage(bootscreen::AUDIO);
     arch::hdmi_audio::init(false);
+    bootscreen::stage(bootscreen::SERVICES);
     // Background services, as the x86 desktop starts them: the chat listener
     // (so messages arrive with the window closed) and, when the setup wizard
     // enabled it, the SSH server.
     crate::drivers::messenger::start();
     // the SSH + SFTP server is on unless switched off in Settings / setup
-    if crate::setup::saved("ssh") != "0" {
+    // (one source of truth with the Startup tab: startup::ssh_at_boot)
+    if crate::startup::ssh_at_boot() {
         crate::drivers::sshd::start();
     }
+    bootscreen::finish();
 }
 
 /// The wired network: bring the RP1 Ethernet up and ask DHCP for an address
@@ -746,10 +799,16 @@ pub(crate) fn app_named(name: &[u8]) -> Option<AppEntry> {
 /// screen back to the LingOS console.
 #[cfg(target_arch = "aarch64")]
 fn run_app(name: &[u8], entry: AppEntry) {
+    crate::drivers::bootscreen::end_to_console();
     console_write(b"starting ");
     console_write(name);
     console_write(b" (Ctrl+Q returns to LingOS)...\n");
+    // Give it its image + home folders so a console-launched app finds its
+    // bundled assets (fonts) just like a desktop launch does.
+    let name_str = core::str::from_utf8(name).unwrap_or("");
+    crate::lingapp::console_app_enter(name_str);
     lingrt::run_isolated(entry);
+    crate::lingapp::console_app_leave();
     rpi_boot_screen();
     crate::drivers::fbcon::init();
     console_write(b"back in LingOS -- type 'apps' to list built-in apps.\n");
@@ -780,6 +839,7 @@ fn announce_apps() {
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
+    crate::drivers::bootscreen::end_to_console();
     console_write(b"LingOS aarch64 (Raspberry Pi)\nbasic kernel booted.\n\n");
     // Auto-run the USB probe once at boot. Without a serial adapter the only
     // way to see its output (and the only way to drive it at all, since typing
@@ -798,12 +858,55 @@ pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
     0
 }
 
+/// Color the characters that follow on the Pi's HDMI console (an
+/// `fbcon::PALETTE` index: 0 plain, 1..=7 ROYGBIV, 8 dim, 9 ok, 10 err,
+/// 11 white). Serial stays plain text -- the QEMU harness greps it.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn console_color(idx: u8) {
+    crate::drivers::fbcon::set_color(idx);
+}
+
+/// The Pi console's zsh-style prompt: `user@host /cwd (miao:soul +) $ ` --
+/// color-coded on the HDMI console (green user, blue host, red path; when
+/// the cwd holds a .miao shrine, its living soul the way zsh's git prompt
+/// shows the branch, with a yellow + while offerings sit on the altar).
+#[cfg(target_arch = "aarch64")]
+fn rpi_prompt() {
+    let seg = |idx: u8, s: &[u8]| {
+        console_color(idx);
+        console_write(s);
+    };
+    seg(9, fs::lingfs::current_user().as_bytes());
+    seg(8, b"@");
+    seg(5, crate::setup::hostname().as_bytes());
+    let cwd = fs::lingfs::cwd();
+    seg(1, b" /");
+    seg(1, cwd.as_bytes());
+    // Read the shrine through vfs, not raw lingfs: with the SD data partition
+    // mounted, home folders live on media/card, so a raw lingfs read would
+    // miss the shrine and drop the segment.
+    let soul_path = if cwd.is_empty() { alloc::string::String::from(".miao/SOUL") } else { alloc::format!("{cwd}/.miao/SOUL") };
+    if let Some(bytes) = crate::vfs::read(&soul_path) {
+        let soul = alloc::string::String::from(core::str::from_utf8(&bytes).unwrap_or("").split_whitespace().nth(1).unwrap_or("main"));
+        seg(8, b" (");
+        seg(7, b"miao:");
+        seg(5, soul.as_bytes());
+        let altar_path = if cwd.is_empty() { alloc::string::String::from(".miao/altar") } else { alloc::format!("{cwd}/.miao/altar") };
+        if crate::vfs::read(&altar_path).is_some_and(|a| !a.is_empty()) {
+            seg(3, b" +");
+        }
+        seg(8, b")");
+    }
+    seg(8, b" $ ");
+    console_color(0);
+}
+
 /// The Pi's interactive line console (serial + USB keyboard, echoed to HDMI).
 /// `nested`: opened from the desktop — `exit` returns to it.
 #[cfg(target_arch = "aarch64")]
 fn rpi_console(nested: bool) {
     use crate::drivers::{font8x8, framebuffer};
-    console_write(b"lingos$ ");
+    rpi_prompt();
     const BAR: u32 = 0x6C_3A_FF;
     let mut last = u64::MAX;
     let mut line = [0u8; 128];
@@ -821,7 +924,7 @@ fn rpi_console(nested: bool) {
                     }
                     rpi_shell_exec(&line[..len]);
                     len = 0;
-                    console_write(b"lingos$ ");
+                    rpi_prompt();
                 },
                 0x08 | 0x7F => {
                     if len > 0 {
@@ -877,7 +980,104 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, date, hostname, board, usb, sshd, keyring [path], run [hello|<file.elf>], ps, wifi [scan|join <ssid> <psk>|leave|status], net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>, reboot, poweroff\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, date, hostname, board, usb, ssh-serve [on|off|port <n>], keyring [path], run [hello|<file.elf>], ps, wifi [scan|join <ssid> <psk>|leave|status], net, dhcp, curl <url>, lingfu install <name>, sd [format], cd <dir>, pwd, ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, miao <rite...>, motd [show|set <file>|clear], 2fa [setup|confirm <code>|off <code>|status], mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>, reboot, poweroff\n");
+    } else if s == b"cd" || s.starts_with(b"cd ") {
+        // the working directory colors the prompt (and roots ls/cat/miao)
+        let arg = core::str::from_utf8(&s[2.min(s.len())..]).unwrap_or("").trim();
+        if !fs::lingfs::set_cwd(arg) {
+            console_write(b"cd: no such directory\n");
+        }
+    } else if s == b"pwd" {
+        console_write(b"/");
+        console_write(fs::lingfs::cwd().as_bytes());
+        console_write(b"\n");
+    } else if s == b"ssh-serve" || s.starts_with(b"ssh-serve ") {
+        // the SSH + SFTP server: on/off now AND at boot (startup.rs persists
+        // it; works with a static IP or DHCP, whichever the system uses)
+        let arg = core::str::from_utf8(&s[9.min(s.len())..]).unwrap_or("").trim();
+        let sshp = crate::drivers::sshd::port();
+        match arg {
+            "on" | "start" | "enable" => {
+                crate::startup::set("ssh", true);
+                let ip = crate::drivers::netstack::self_ip();
+                console_write(alloc::format!("ssh-serve: ON -- SSH + SFTP at {}.{}.{}.{}:{} (persisted: starts at boot)\n", ip[0], ip[1], ip[2], ip[3], sshp).as_bytes());
+            },
+            "off" | "stop" | "disable" => {
+                crate::startup::set("ssh", false);
+                console_write(b"ssh-serve: OFF -- the listener is closed and it stays off at boot\n");
+            },
+            a if a.starts_with("port") => {
+                match a[4..].trim().parse::<u16>() {
+                    Ok(p) if p != 0 => {
+                        let saved = crate::drivers::sshd::set_port(p);
+                        console_write(alloc::format!("ssh-serve: port {}{}\n", p, if saved { "" } else { " (could not be saved: the setting is lost at reboot)" }).as_bytes());
+                    },
+                    _ => console_write(alloc::format!("ssh-serve: port {} (change it with: ssh-serve port <1-65535>)\n", sshp).as_bytes()),
+                }
+            },
+            _ => {
+                if crate::drivers::sshd::enabled() {
+                    let ip = crate::drivers::netstack::self_ip();
+                    console_write(alloc::format!("ssh-serve: running at {}.{}.{}.{}:{} (SSH + SFTP)\n", ip[0], ip[1], ip[2], ip[3], sshp).as_bytes());
+                } else {
+                    console_write(b"ssh-serve: off\n");
+                }
+                console_write(if crate::startup::ssh_at_boot() { b"  starts at boot (ssh-serve off to stop)\n".as_slice() } else { b"  not started at boot (ssh-serve on to start)\n".as_slice() });
+            },
+        }
+    } else if s == b"wifi-intel" || s.starts_with(b"wifi-intel ") {
+        #[cfg(target_arch = "x86_64")]
+        console_write(crate::drivers::iwlwifi::command(core::str::from_utf8(&s[10..]).unwrap_or("")).as_bytes());
+        #[cfg(not(target_arch = "x86_64"))]
+        console_write(b"wifi-intel: x86-64 only (the Pi's radio is `wifi`)\n");
+    } else if s == b"nvme" {
+        #[cfg(target_arch = "x86_64")]
+        console_write(crate::drivers::nvme::command("").as_bytes());
+        #[cfg(not(target_arch = "x86_64"))]
+        console_write(b"nvme: x86-64 only\n");
+    } else if s == b"gpu" || s.starts_with(b"gpu ") {
+        #[cfg(target_arch = "x86_64")]
+        console_write(crate::drivers::nvgpu::command("").as_bytes());
+        #[cfg(not(target_arch = "x86_64"))]
+        console_write(b"gpu: the Pi's VideoCore is driven through the firmware mailbox
+");
+    } else if s == b"cpu" || s.starts_with(b"cpu ") {
+        #[cfg(target_arch = "x86_64")]
+        console_write(crate::arch::cpudrv::command(core::str::from_utf8(&s[3.min(s.len())..]).unwrap_or("")).as_bytes());
+    } else if s == b"bench3d" || s.starts_with(b"bench3d ") {
+        // the multi-core 3-D rasterizer benchmark
+        console_write(crate::drivers::g3d::bench(core::str::from_utf8(&s[7.min(s.len())..]).unwrap_or("")).as_bytes());
+    } else if s == b"cores" || s.starts_with(b"cores ") {
+        // the worker cores: cores [N]
+        let out = crate::par::command(core::str::from_utf8(&s[5.min(s.len())..]).unwrap_or(""));
+        console_write(out.as_bytes());
+    } else if s == b"prof" || s.starts_with(b"prof ") {
+        // the opt-in frame profiler: prof [frames] | show | stop
+        let out = crate::prof::command(core::str::from_utf8(&s[4.min(s.len())..]).unwrap_or(""));
+        console_write(out.as_bytes());
+    } else if s == b"motd" || s.starts_with(b"motd ") {
+        // the SSH login message: motd [show | set <file> | clear]
+        let arg = core::str::from_utf8(&s[4.min(s.len())..]).unwrap_or("").trim();
+        let out = motd::run(arg, &|f| match f.strip_prefix('/') {
+            Some(abs) => vfs::norm(abs),
+            None => vfs::join(fs::lingfs::cwd(), f),
+        });
+        console_write(out.as_bytes());
+    } else if s == b"miao" || s.starts_with(b"miao ") {
+        // the temple of versions: route to the installed ling-miao package.
+        // --cwd hands it the shell's working directory (lingfs-root absolute)
+        // so the rites run where the user stands.
+        if crate::lingc::locate("pkg-ling-miao").is_none() {
+            console_write(b"miao: the temple is not installed -- lingfu install ling-miao\n");
+        } else {
+            let arg = core::str::from_utf8(&s[4.min(s.len())..]).unwrap_or("").trim();
+            let mut cmd = alloc::format!("ling run pkg-ling-miao --cwd /{}", fs::lingfs::cwd());
+            if !arg.is_empty() {
+                cmd.push(' ');
+                cmd.push_str(arg);
+            }
+            rpi_shell_exec(cmd.as_bytes());
+        }
     } else if s == b"date" {
         let t = crate::lingapp::wall_time();
         if t == 0 {
@@ -984,6 +1184,36 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
         arch::rp1::usb_probe();
     } else if s == b"p2ptest" {
         console_write(crate::lwp::selftest::run().as_bytes());
+    } else if s == b"fsstat" || s == b"compact" || s.starts_with(b"fsstress ") {
+        // lingfs on the card: room left, a forced compaction, or a rewrite loop
+        if s == b"compact" {
+            let _g = fs::lingfs::FsGuard::new();
+            let r = fs::lingfs::compact(fs::lingfs::root(), true);
+            console_write(if r == Ok(true) { b"compact: done
+" } else { b"compact: nothing done
+" });
+        }
+        if let Some(n) = s.strip_prefix(b"fsstress ").and_then(|r| core::str::from_utf8(r).ok()).and_then(|r| r.trim().parse::<usize>().ok()) {
+            let mut failed = 0usize;
+            for i in 0..n {
+                let text = alloc::format!("stress write {i}");
+                if fs::lingfs::write_file_any("fsstress", text.as_bytes()).is_err() {
+                    failed += 1;
+                }
+            }
+            console_write(alloc::format!("fsstress: {n} writes, {failed} failed
+").as_bytes());
+        }
+        console_write(
+            alloc::format!(
+                "lingfs: slot at sector {}, {} commits left, {} object slots free
+",
+                fs::lingfs::objects::base_lba(),
+                fs::lingfs::commits_left(),
+                fs::lingfs::free_objects()
+            )
+            .as_bytes(),
+        );
     } else if s == b"gc" || s.starts_with(b"gc ") {
         if let Some(mib) = s.strip_prefix(b"gc ").and_then(|r| core::str::from_utf8(r).ok()).and_then(|r| r.trim().parse::<usize>().ok()) {
             crate::lingrt::gc_set_trigger(mib << 20);
@@ -1016,10 +1246,14 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
         append_bytes(&mut b, &mut n, b"\n");
         console_write(&b[..n]);
     } else if s == b"dhcp" {
-        if arch::rp1_eth::ensure_init() {
-            if !crate::drivers::netstack::dhcp_configure() {
-                console_write(b"net: DHCP got no lease\n");
-            }
+        // the joined Wi-Fi network or the wire, whichever is up
+        if !arch::netdev::ensure_init() {
+            console_write(b"net: no network -- join Wi-Fi or plug in a cable\n");
+        } else if crate::drivers::netstack::static_config().is_some() {
+            crate::drivers::netstack::configure();
+            console_write(b"net: a static address is set (Settings > Network) -- DHCP stays off\n");
+        } else if !crate::drivers::netstack::dhcp_configure() {
+            console_write(b"net: DHCP got no lease\n");
         }
     } else if let Some(rest) = s.strip_prefix(b"curl ") {
         let url = core::str::from_utf8(rest).unwrap_or("").trim();
@@ -1031,6 +1265,8 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
         console_write(b"\n");
         console_write(&body.as_bytes()[..body.len().min(2000)]);
         console_write(b"\n");
+    } else if s == b"2fa" || s.starts_with(b"2fa ") {
+        console_2fa(core::str::from_utf8(&s[3..]).unwrap_or("").trim());
     } else if s == b"lingfu" || s.starts_with(b"lingfu ") {
         let arg = core::str::from_utf8(&s[6.min(s.len())..]).unwrap_or("").trim();
         let (sub, name) = match arg.find(' ') {
@@ -1096,6 +1332,8 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
         let p = core::str::from_utf8(rest).unwrap_or("").trim();
         console_write(if crate::vfs::mkdir(p) { b"created\n" } else { b"mkdir: failed\n" });
     } else if s == b"media" {
+        // the card's data partition (media/card) is listed with the other volumes
+        crate::setup::mount_data_partition();
         crate::drivers::usbmsd::status();
     } else if s == b"sd" {
         storage_boot();
@@ -1518,6 +1756,7 @@ pub unsafe extern "C" fn ling_kernel_locale_reset() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_locale_restore() -> u64 {
+    crate::drivers::bootscreen::stage(crate::drivers::bootscreen::FILESYSTEM);
     locale::restore() as u64
 }
 
@@ -2124,6 +2363,10 @@ pub unsafe extern "C" fn ling_kernel_fb_back_fill_circle(cx: u64, cy: u64, r: u6
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_draw_cursor(mx: u64, my: u64) -> u64 {
     use crate::drivers::cursor;
+    // the frame a screenshot is taken from goes out without the pointer
+    if crate::drivers::screenshot::pending() {
+        return 0;
+    }
     let fill = cursor::fill_color(timer::now_ms());
     for dy in 0..cursor::H {
         for dx in 0..cursor::W {
@@ -2397,11 +2640,65 @@ pub unsafe extern "C" fn ling_kernel_wm_lock_due() -> u64 {
 }
 
 /// The lock screen: is this the signed-in user's password? (1 = yes)
+/// After a right password on x86 (the greeter and the lock screen are Ling
+/// code that only collects user + password): a two-factor account is asked
+/// for its authenticator code here, on a card the kernel draws itself. True
+/// when the account has no 2FA or a good code (or recovery code) came in.
+#[cfg(target_arch = "x86_64")]
+unsafe fn twofa_prompt(user: &str) -> bool {
+    if !crate::fs::twofa::enabled(user) {
+        return true;
+    }
+    let (fw, fh) = (framebuffer::width() as u32, framebuffer::height() as u32);
+    let cw = (ui_scale::len(460) as u32).min(fw);
+    let ch = (ui_scale::len(170) as u32).min(fh);
+    let (cx, cy) = ((fw - cw) / 2, (fh - ch) / 2);
+    let (bg, fg, dim, err) = (theme::color(1), theme::color(3), theme::color(4), theme::color(5));
+    for attempt in 0..3 {
+        framebuffer::back_fill_rounded_rect(cx, cy, cw, ch, 12, theme::color(2));
+        framebuffer::back_fill_rounded_rect(cx + 1, cy + 1, cw - 2, ch - 2, 11, bg);
+        font8x8::draw_str(cx + 24, cy + 20, b"Two-factor sign-in", theme::color(10), bg);
+        font8x8::draw_str(cx + 24, cy + 44, b"code from your authenticator app", dim, bg);
+        font8x8::draw_str(cx + 24, cy + 60, b"(or a recovery code)", dim, bg);
+        if attempt > 0 {
+            font8x8::draw_str(cx + 24, cy + 132, b"That code did not match. Try the newest one.", err, bg);
+        } else if !crate::clock::is_set() {
+            font8x8::draw_str(cx + 24, cy + 132, b"Clock not set from the network: codes may be off.", err, bg);
+        }
+        font8x8::draw_str(cx + 24, cy + 96, b"code:", fg, bg);
+        framebuffer::present();
+        let mut buf = [0u8; 24];
+        let mut len = 0usize;
+        loop {
+            let c = keyboard::read_char();
+            if c == b'\n' || c == b'\r' {
+                break;
+            } else if c == 0x03 || c == 0x1B {
+                return false;
+            } else if c == 0x08 {
+                len = len.saturating_sub(1);
+            } else if len < buf.len() && c >= 0x20 && c < 0x7F {
+                buf[len] = c;
+                len += 1;
+            } else {
+                continue;
+            }
+            framebuffer::back_fill_rect(cx + 80, cy + 96, 24 * 8, 16, bg);
+            font8x8::draw_str(cx + 80, cy + 96, &buf[..len], fg, bg);
+            framebuffer::present();
+        }
+        if crate::fs::twofa::check(user, core::str::from_utf8(&buf[..len]).unwrap_or("")) {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_user_unlock(password: u64) -> u64 {
     let user = lingfs::current_user();
-    let ok = users::verify(user, arg_str(password));
+    let ok = users::verify(user, arg_str(password)) && twofa_prompt(user);
     if ok {
         crate::startup::touch();
     }
@@ -2474,6 +2771,9 @@ pub unsafe extern "C" fn ling_kernel_display_count() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_display_boot_apply() -> u64 {
     display::restore();
+    // the display is at its final mode now: the boot screen takes over
+    // until the greeter / desktop presents its first frame
+    crate::drivers::bootscreen::begin();
     framebuffer::width() as u64
 }
 
@@ -2556,7 +2856,10 @@ pub unsafe extern "C" fn ling_kernel_http_print(url: u64) -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_audio_init() -> u64 {
-    mixer::init() as u64
+    crate::drivers::bootscreen::stage(crate::drivers::bootscreen::DRIVERS);
+    let ok = mixer::init() as u64;
+    crate::drivers::bootscreen::stage(crate::drivers::bootscreen::AUDIO);
+    ok
 }
 
 /// Keep the DMA ring fed -- call once per frame / shell-loop pass.
@@ -2788,7 +3091,8 @@ pub unsafe extern "C" fn ling_kernel_services_set_ssh(on: u64) -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_boot_is_disk() -> u64 {
-    framebuffer::booted_from_disk() as u64
+    // also a disk `install-disk` made, started by lingboot from its own ESP
+    (framebuffer::booted_from_disk() || fs::blockdev::installed_boot()) as u64
 }
 
 /// Name of the detected boot-target block device ("ahci0" / "ata0") --
@@ -2798,7 +3102,8 @@ pub unsafe extern "C" fn ling_kernel_boot_is_disk() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_disk_name() -> u64 {
-    let n = fs::blockdev::active_driver_name();
+    // the physical disk, even when this session's files are on the RAM disk
+    let n = fs::blockdev::physical_name();
     strings::ling_str_new(n.as_ptr(), n.len())
 }
 
@@ -2847,7 +3152,7 @@ fn u32_dec(buf: &mut [u8], mut v: u32) -> usize {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_part_count() -> u64 {
     let mut sec = [0u8; 512];
-    if fs::blockdev::read_sector(0, &mut sec).is_err() {
+    if fs::blockdev::raw_read(0, &mut sec).is_err() {
         return 0;
     }
     if sec[510] != 0x55 || sec[511] != 0xAA {
@@ -2868,7 +3173,7 @@ pub unsafe extern "C" fn ling_kernel_part_count() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_part_label(idx: u64) -> u64 {
     let mut sec = [0u8; 512];
-    if fs::blockdev::read_sector(0, &mut sec).is_err() {
+    if fs::blockdev::raw_read(0, &mut sec).is_err() {
         return strings::ling_str_new(b"".as_ptr(), 0);
     }
     let mut n = 0u64;
@@ -2925,9 +3230,10 @@ pub unsafe extern "C" fn ling_kernel_part_label(idx: u64) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_disk_erase_quick() -> u64 {
     let zero = [0u8; fs::blockdev::SECTOR_SIZE];
+    fs::blockdev::init();
     // LBA 0 (stage1/MBR), 1..16 (stage2), 17 (kernel header).
     for lba in 0..=17u32 {
-        if fs::blockdev::write_sector(lba, &zero).is_err() {
+        if fs::blockdev::raw_write(lba, &zero).is_err() {
             return 0;
         }
     }
@@ -2935,9 +3241,14 @@ pub unsafe extern "C" fn ling_kernel_disk_erase_quick() -> u64 {
     // lingfs.rs's LINGFS_BASE_LBA reservation comment in packages/README).
     let base = fs::lingfs::LINGFS_BASE_LBA;
     for lba in base..base + 8 {
-        if fs::blockdev::write_sector(lba, &zero).is_err() {
+        if fs::blockdev::raw_write(lba, &zero).is_err() {
             return 0;
         }
+    }
+    // and the second slot's (compaction alternates between the two)
+    let alt = base + fs::lingfs::objects::SLOT_SECTORS;
+    for lba in alt..alt + 8 {
+        let _ = fs::blockdev::raw_write(lba, &zero);
     }
     1
 }
@@ -3018,6 +3329,8 @@ pub unsafe extern "C" fn ling_kernel_mouse_set_bounds(w: u64, h: u64) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_mouse_poll() -> u64 {
     arch::idt::poll_drain_8042();
+    arch::xhci::service(); // a USB mouse's reports
+
     0
 }
 
@@ -3106,7 +3419,7 @@ pub unsafe extern "C" fn ling_kernel_user_create(
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_user_login(username: u64, password: u64) -> u64 {
     let (username, password) = (arg_str(username), arg_str(password));
-    if !users::verify(username, password) {
+    if !users::verify(username, password) || !twofa_prompt(username) {
         return 0;
     }
     let mut group_buf = [0u8; 32];
@@ -3227,7 +3540,9 @@ pub unsafe extern "C" fn ling_kernel_disk_write_raw(lba: u64, src_ptr: u64, coun
             blockdev::SECTOR_SIZE,
         );
         sector.copy_from_slice(chunk);
-        if blockdev::write_sector((lba + i) as u32, &sector).is_err() {
+        // the physical disk even when this session's lingfs is in RAM: the
+        // installer chose it (blockdev::init's RAM-disk decision)
+        if blockdev::raw_write((lba + i) as u32, &sector).is_err() {
             return 0;
         }
     }
@@ -3365,6 +3680,10 @@ unsafe fn gui_read_masked_line_at(x: u32, y: u32, fg: u32, bg: u32) -> ([u8; MAX
     let mut buf = [0u8; MAX_LINE];
     let mut len = 0usize;
     let stars = [b'*'; MAX_LINE];
+    // Drop any scancodes buffered before this field got focus (a typematic
+    // burst from a key held during logout) so they don't replay as password
+    // characters.
+    keyboard::drain();
     loop {
         let c = keyboard::read_char();
         if c == b'\n' || c == b'\r' {
@@ -3449,6 +3768,7 @@ pub unsafe extern "C" fn ling_kernel_gui_read_password_confirmed(
 unsafe fn read_masked_line() -> ([u8; MAX_LINE], usize) {
     let mut buf = [0u8; MAX_LINE];
     let mut len = 0usize;
+    keyboard::drain(); // see gui_read_masked_line_at: no pre-focus burst
     loop {
         let c = keyboard::read_char();
         if c == b'\n' || c == b'\r' {
@@ -3646,11 +3966,17 @@ pub unsafe extern "C" fn ling_kernel_asm_exec(ptr: u64, len: u64) -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_net_init() -> u64 {
-    let Ok(()) = net_e1000::init() else {
-        serial::write(b"net: no e1000-compatible NIC found\n");
+    crate::drivers::bootscreen::stage(crate::drivers::bootscreen::NETWORK);
+    // Intel AX201 Wi-Fi (staged bring-up; prints each stage, bounded waits).
+    crate::drivers::iwlwifi::boot();
+    // e1000 (VMs) if present, else the Intel I225/I226 (drivers::netdev).
+    let up = crate::drivers::netdev::ensure_init();
+    serial::write(crate::drivers::netdev::status_line().as_bytes());
+    serial::write(b"\n");
+    if !up {
         return 0;
-    };
-    let m = net_e1000::mac();
+    }
+    let m = crate::drivers::netdev::mac();
     serial::write(b"net: MAC=");
     for (i, b) in m.iter().enumerate() {
         if i > 0 {
@@ -3659,16 +3985,22 @@ pub unsafe extern "C" fn ling_kernel_net_init() -> u64 {
         print_hex_byte(*b);
     }
     serial::write(b" link_up=");
-    print_decimal(net_e1000::link_up() as u64);
+    print_decimal(crate::drivers::netdev::link_up() as u64);
     serial::write(b"\n");
     // Learn our IP/mask/gateway/DNS from the network we're actually on. This
     // is what makes DNS resolve on a VirtualBox bridged/host-only adapter,
     // where the SLIRP-convention static fallbacks are wrong. Bounded and
     // best-effort: on failure the static fallback stays and plain QEMU still
-    // works.
-    if netstack::dhcp_configure() {
-        let ip = net_e1000::self_ip();
-        let gw = net_e1000::gateway_ip();
+    // works. No link (real NIC, no cable): skip DHCP's ~4s of timeouts.
+    let dhcp_ok = if !crate::drivers::netdev::link_up() && netstack::static_config().is_none() {
+        serial::write(b"net: no link -- DHCP skipped\n");
+        false
+    } else {
+        netstack::dhcp_configure()
+    };
+    if dhcp_ok {
+        let ip = crate::drivers::netdev::self_ip();
+        let gw = crate::drivers::netdev::gateway_ip();
         let (d1, _) = netstack::dns_servers();
         serial::write(b"net: DHCP lease ip=");
         for (i, b) in ip.iter().enumerate() {
@@ -3723,6 +4055,7 @@ pub unsafe extern "C" fn ling_kernel_net_init() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_services_boot_configure() -> u64 {
+    crate::drivers::bootscreen::stage(crate::drivers::bootscreen::SERVICES);
     services::boot_configure();
     0
 }
@@ -3733,7 +4066,7 @@ pub unsafe extern "C" fn ling_kernel_services_boot_configure() -> u64 {
 /// (see `drivers::sshd`). Returns 1 if a client connected, else 0.
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_sshd_serve() -> u64 {
-    console_write(b"sshd: listening on port 22 for one connection (30s)...\n");
+    console_write(alloc::format!("sshd: listening on port {} for one connection (30s)...\n", crate::drivers::sshd::port()).as_bytes());
     match crate::drivers::sshd::serve(30_000_000) {
         Ok(()) => 1,
         Err(e) => {
@@ -3752,6 +4085,19 @@ pub unsafe extern "C" fn ling_kernel_sshd_start() -> u64 {
     crate::drivers::sshd::start();
     1
 }
+/// Switch the SSH + SFTP server on/off -- live AND persisted for every boot
+/// (`startup::set`, one source of truth with Settings > Startup). The
+/// console's `ssh-serve on|off`. Non-zero = on.
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_sshd_set(on: u64) -> u64 {
+    crate::startup::set("ssh", on != 0);
+    1
+}
+/// Is the SSH server running right now (listener up)?
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_sshd_running() -> u64 {
+    crate::drivers::sshd::enabled() as u64
+}
 /// Whether the SSH server is marked to start at boot (lingfs `/services`,
 /// written by the installer or the first-boot prompt). Lets the desktop decide
 /// whether to `ling_kernel_sshd_start`.
@@ -3769,18 +4115,20 @@ pub unsafe extern "C" fn ling_kernel_services_ssh_enabled() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_messenger_start() -> u64 {
     crate::drivers::messenger::start();
+    // the last boot step on x86: 100%, then the greeter / desktop
+    crate::drivers::bootscreen::finish();
     1
 }
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_net_link_up() -> u64 {
-    net_e1000::link_up() as u64
+    crate::drivers::netdev::link_up() as u64
 }
 /// One byte (0..5) of the NIC's real MAC address.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_net_mac_byte(i: u64) -> u64 {
-    net_e1000::mac().get(i as usize).copied().unwrap_or(0) as u64
+    crate::drivers::netdev::mac().get(i as usize).copied().unwrap_or(0) as u64
 }
 /// One byte (0..3) of our current IPv4 address -- the DHCP lease if one was
 /// obtained, else the static SLIRP fallback.
@@ -3802,7 +4150,10 @@ pub unsafe extern "C" fn ling_kernel_net_gateway_ip_byte(i: u64) -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_net_arp_selftest() -> u64 {
-    match net_e1000::arp_selftest() {
+    if !crate::drivers::netdev::ensure_init() {
+        return 0;
+    }
+    match crate::drivers::netdev::arp_selftest() {
         Some(mac) => {
             ARP_REPLY_MAC = mac;
             serial::write(b"net: ARP reply from ");
@@ -3826,4 +4177,64 @@ static mut ARP_REPLY_MAC: [u8; 6] = [0; 6];
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_net_arp_reply_mac_byte(i: u64) -> u64 {
     ARP_REPLY_MAC.get(i as usize).copied().unwrap_or(0) as u64
+}
+
+/// `2fa [status | setup | confirm <code> | off <code> | cancel]` on the Pi
+/// console / Terminal window (the x86 terminal has its own in terminal.rs).
+#[cfg(target_arch = "aarch64")]
+fn console_2fa(arg: &str) {
+    use crate::fs::twofa;
+    let u = crate::fs::lingfs::current_user();
+    let user = if u.is_empty() { "ling" } else { u };
+    let (cmd, rest) = match arg.split_once(' ') {
+        Some((c, r)) => (c, r.trim()),
+        None => (arg, ""),
+    };
+    let say = |t: &str| {
+        console_write(t.as_bytes());
+        console_write(b"\n");
+    };
+    match cmd {
+        "" | "status" => {
+            if twofa::enabled(user) {
+                say(&alloc::format!("2fa: on for {user} ({} recovery codes left)", twofa::recovery_left(user)));
+            } else {
+                say(&alloc::format!("2fa: off for {user} -- '2fa setup' turns it on (or Settings > Sign-in)"));
+            }
+        },
+        "setup" => match twofa::begin(user) {
+            Some((secret, _uri)) => {
+                let mut spaced = alloc::string::String::new();
+                for (i, ch) in secret.chars().enumerate() {
+                    if i > 0 && i % 4 == 0 {
+                        spaced.push(' ');
+                    }
+                    spaced.push(ch);
+                }
+                say("In your authenticator app choose 'enter a setup key' (Settings > Sign-in shows a QR code):");
+                say(&alloc::format!("  account: LingOS {user}   key: {spaced}   (time-based, 6 digits)"));
+                say("Then: 2fa confirm <the 6-digit code the app shows>");
+                if !crate::clock::is_set() {
+                    say("The clock is not set from the network: connect first, codes are time-based.");
+                }
+            },
+            None => say("2fa: already on (2fa off <code> first), or storage is not writable"),
+        },
+        "confirm" => match twofa::confirm(user, rest) {
+            Some(codes) => {
+                say("2fa: on. Signing in now asks for a code after the password.");
+                say("Recovery codes (each works once -- write them down, they are not shown again):");
+                for c in codes {
+                    say(&alloc::format!("  {c}"));
+                }
+            },
+            None => say("2fa: that code did not match (or no setup pending) -- check the clock"),
+        },
+        "off" => say(if twofa::disable(user, rest) { "2fa: off" } else { "2fa: that code did not match" }),
+        "cancel" => {
+            twofa::cancel(user);
+            say("2fa: setup cancelled");
+        },
+        _ => say("usage: 2fa [status | setup | confirm <code> | off <code> | cancel]"),
+    }
 }

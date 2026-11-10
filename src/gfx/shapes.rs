@@ -1088,6 +1088,32 @@ thread_local! {
 /// Confirmed real: monster/figure primitives (ball3d/tube3d/efan → sphere/
 /// cylinder/…) call this with the SAME segs/rings dozens of times per
 /// frame, per monster, at 60fps.
+/// Radius of the untransformed (unit) shape's bounding sphere about its origin,
+/// cached per (kind, e0, e1, e2) like the base mesh. Scaling by the largest
+/// per-axis scale gives a sphere that holds the drawn shape under any rotation,
+/// which lets the shape builtins skip off-screen primitives before building them.
+pub fn base_radius(kind: &str, e0: f32, e1: f32, e2: f32) -> Option<f32> {
+    thread_local! {
+        static RADIUS: std::cell::RefCell<rustc_hash::FxHashMap<(String, u32, u32, u32), f32>> =
+            std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+    }
+    let key = (kind.to_string(), e0.to_bits(), e1.to_bits(), e2.to_bits());
+    if let Some(r) = RADIUS.with(|c| c.borrow().get(&key).copied()) {
+        return Some(r);
+    }
+    let m = BASE_MESH_CACHE.with(|cache| -> Option<Mesh> {
+        if let Some(cached) = cache.borrow().get(&key) {
+            return Some(cached.clone());
+        }
+        let fresh = build_base(kind, e0, e1, e2)?;
+        cache.borrow_mut().insert(key.clone(), fresh.clone());
+        Some(fresh)
+    })?;
+    let r = m.verts.iter().map(|v| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()).fold(0.0f32, f32::max);
+    RADIUS.with(|c| c.borrow_mut().insert(key, r));
+    Some(r)
+}
+
 pub fn build(kind: &str, c: [f32; 9], e0: f32, e1: f32, e2: f32) -> Option<Mesh> {
     let key = (kind.to_string(), e0.to_bits(), e1.to_bits(), e2.to_bits());
     let mut m = BASE_MESH_CACHE.with(|cache| -> Option<Mesh> {

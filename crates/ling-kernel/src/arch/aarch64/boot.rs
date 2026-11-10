@@ -112,6 +112,27 @@ pub fn kernel_end() -> u64 {
 pub unsafe fn zero_bss() {
     let start = &raw mut __bss_start as usize;
     let end = &raw mut __bss_end as usize;
+    // The firmware puts the device tree right after the end of kernel8.img
+    // -- i.e. inside our .bss / boot stack once the image is big enough
+    // (seen on a Pi 5 at ~180 MB: memory init then ran on guesses and hung).
+    // Move it past the kernel first; fdt::preserve copies it from there.
+    let dtb = core::ptr::read_volatile(&raw const DTB_PTR) as usize;
+    let kend = (&raw const _kernel_end) as usize;
+    if dtb > 1 && dtb >= start && dtb < kend {
+        let src = dtb as *const u8;
+        let be = |o: usize| u32::from_be_bytes([core::ptr::read_volatile(src.add(o)), core::ptr::read_volatile(src.add(o + 1)), core::ptr::read_volatile(src.add(o + 2)), core::ptr::read_volatile(src.add(o + 3))]);
+        if be(0) == 0xD00D_FEED {
+            let total = (be(4) as usize).min(1 << 20);
+            let dst = ((kend + 0xFFFF) & !0xFFFF) as *mut u8;
+            // dst is above src and the two may overlap: copy from the top down
+            let mut i = total;
+            while i > 0 {
+                i -= 1;
+                core::ptr::write_volatile(dst.add(i), core::ptr::read_volatile(src.add(i)));
+            }
+            core::ptr::write_volatile(&raw mut DTB_PTR, dst as u64);
+        }
+    }
     let mut p = start as *mut u8;
     while (p as usize) < end {
         core::ptr::write_volatile(p, 0);

@@ -286,14 +286,125 @@ pub fn music_playing() -> bool {
     music_voice().is_some_and(|v| v.active && !v.paused)
 }
 
+// ── Tone voices (`audio_tone`): continuous oscillators a program retunes every
+// frame -- the host runtime's chip-style synth that Ling Arcade's NES APU
+// drives (2 pulses, triangle, noise). Amplitude and frequency glide toward
+// their targets (`audio_glide`) so per-frame updates ramp instead of click.
+
+const MAX_TONES: usize = 8;
+
+#[derive(Clone, Copy)]
+struct Tone {
+    freq: f32,
+    amp: f32,
+    target_freq: f32,
+    target_amp: f32,
+    /// 0 sine, 1 square, 2 saw, 3 triangle, 4 noise
+    wave: u8,
+    duty: f32,
+    pan: f32,
+    phase: f32,
+    lfsr: u32,
+}
+
+const TONE_OFF: Tone = Tone { freq: 220.0, amp: 0.0, target_freq: 220.0, target_amp: 0.0, wave: 0, duty: 0.5, pan: 0.0, phase: 0.0, lfsr: 1 };
+static mut TONES: [Tone; MAX_TONES] = [TONE_OFF; MAX_TONES];
+/// Glide time constants in ms (amplitude, frequency); <= 0 = the default.
+static mut GLIDE_MS: (f32, f32) = (5.0, 2.0);
+
+fn tones() -> &'static mut [Tone; MAX_TONES] {
+    unsafe { &mut *(&raw mut TONES) }
+}
+
+/// Retune voice `idx`: frequency (Hz), amplitude (0..1), waveform, square duty, pan (-1..1).
+pub fn set_tone(idx: usize, freq: f32, amp: f32, wave: u8, duty: f32, pan: f32) {
+    if let Some(t) = tones().get_mut(idx) {
+        if t.target_amp <= 0.0 && t.amp <= 1e-4 {
+            t.freq = freq.max(0.0); // a voice starting from silence starts on pitch
+        }
+        t.target_freq = freq.max(0.0);
+        t.target_amp = amp.clamp(0.0, 1.0);
+        t.wave = wave;
+        t.duty = duty.clamp(0.01, 0.99);
+        t.pan = pan.clamp(-1.0, 1.0);
+    }
+}
+
+pub fn set_tone_glide(amp_ms: f32, freq_ms: f32) {
+    unsafe {
+        GLIDE_MS = (if amp_ms > 0.0 { amp_ms } else { 5.0 }, if freq_ms > 0.0 { freq_ms } else { 2.0 });
+    }
+}
+
+fn tones_active() -> bool {
+    tones().iter().any(|t| t.amp > 1e-4 || t.target_amp > 0.0)
+}
+
+fn mix_tones(out: &mut [i16]) {
+    let frames = out.len() / 2;
+    let master = unsafe { MASTER };
+    let (ams, fms) = unsafe { GLIDE_MS };
+    // one-pole smoothing coefficients per sample
+    let ka = 1.0 - libm::expf(-1000.0 / (ams * RATE as f32));
+    let kf = 1.0 - libm::expf(-1000.0 / (fms * RATE as f32));
+    for t in tones().iter_mut() {
+        if t.amp <= 1e-4 && t.target_amp <= 0.0 {
+            t.amp = 0.0;
+            continue;
+        }
+        let (lg, rg) = if t.pan <= 0.0 { (1.0, 1.0 + t.pan) } else { (1.0 - t.pan, 1.0) };
+        for fr in 0..frames {
+            t.amp += (t.target_amp - t.amp) * ka;
+            t.freq += (t.target_freq - t.freq) * kf;
+            let step = t.freq / RATE as f32;
+            let p = t.phase;
+            let v = match t.wave {
+                1 => {
+                    if p < t.duty {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                },
+                2 => 2.0 * p - 1.0,
+                3 => 1.0 - 4.0 * libm::fabsf(p - 0.5),
+                4 => {
+                    if t.lfsr & 1 == 1 {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                },
+                _ => libm::sinf(p * core::f32::consts::TAU),
+            };
+            let mut np = p + step;
+            if np >= 1.0 {
+                np -= libm::floorf(np);
+                if t.wave == 4 {
+                    // 15-bit LFSR, clocked once per period (the NES noise channel's shape)
+                    let bit = (t.lfsr ^ (t.lfsr >> 1)) & 1;
+                    t.lfsr = (t.lfsr >> 1) | (bit << 14);
+                }
+            }
+            t.phase = np;
+            let s = v * t.amp * master * 12000.0;
+            let ol = out[fr * 2] as f32 + s * lg;
+            let or = out[fr * 2 + 1] as f32 + s * rg;
+            out[fr * 2] = ol.clamp(-32767.0, 32767.0) as i16;
+            out[fr * 2 + 1] = or.clamp(-32767.0, 32767.0) as i16;
+        }
+    }
+}
+
 /// Anything audible right now (so an output that is otherwise idle keeps running).
 pub fn active() -> bool {
-    voices().iter().any(|v| v.active && !v.paused)
+    voices().iter().any(|v| v.active && !v.paused) || tones_active()
 }
 
 /// Add the voices' next `frames` frames to `out` (interleaved stereo i16),
 /// saturating. Silent voices cost nothing.
 pub fn mix_into(out: &mut [i16]) {
+    mix_tones(out);
     let frames = out.len() / 2;
     let master = unsafe { MASTER };
     let mvol = unsafe { MUSIC_VOL };

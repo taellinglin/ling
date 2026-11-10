@@ -72,6 +72,118 @@ fn has_audio_context_ctor() -> bool {
         || Reflect::has(&g, &JsValue::from_str("webkitAudioContext")).unwrap_or(false)
 }
 
+// ── remote audio (the program runs in a Web Worker) ──────────────────────────
+// Workers have no AudioContext. When the host page installs a global
+// `__ling_audio(op, ...args)` in the worker, every audio call is forwarded to it
+// instead and the page plays the sound on the main thread: samples are fetched
+// and decoded there (the worker never touches the bytes) and BGM streams
+// through an <audio> element. Ops: "bgm" path vol · "bgm_vol" v · "master" v ·
+// "load" id path · "play" id vol loop pitch [offset dur] · "blip" freq dur wave amp.
+thread_local! {
+    static REMOTE_NEXT: RefCell<i32> = RefCell::new(0);
+}
+
+fn remote_fn() -> Option<Function> {
+    if has_audio_context_ctor() {
+        return None;
+    }
+    Reflect::get(&js_sys::global(), &JsValue::from_str("__ling_audio"))
+        .ok()
+        .and_then(|f| f.dyn_into::<Function>().ok())
+}
+
+fn remote(args: &[JsValue]) -> bool {
+    match remote_fn() {
+        Some(f) => {
+            let arr = Array::new();
+            for a in args {
+                arr.push(a);
+            }
+            let _ = f.apply(&JsValue::NULL, &arr);
+            true
+        },
+        None => false,
+    }
+}
+
+/// Remote mode: hand the page a sample path to fetch + decode; returns its id.
+pub fn remote_sample_load(path: &str) -> Option<i32> {
+    remote_fn()?;
+    let id = REMOTE_NEXT.with(|n| {
+        let mut n = n.borrow_mut();
+        let id = *n;
+        *n += 1;
+        id
+    });
+    // the host may answer synchronously: a negative number = no such sound
+    // (lets the game fall back, exactly as a failed native load would)
+    let f = remote_fn()?;
+    let arr = Array::new();
+    arr.push(&JsValue::from_str("load"));
+    arr.push(&JsValue::from(id));
+    arr.push(&JsValue::from_str(path));
+    let r = f.apply(&JsValue::NULL, &arr).ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+    Some(if r < 0.0 { -1 } else { id })
+}
+
+/// A short synthesized interface tone (audio_blip).
+pub fn blip(freq: f32, dur: f32, wave: &str, amp: f32) {
+    if remote(&[
+        JsValue::from_str("blip"),
+        JsValue::from(freq as f64),
+        JsValue::from(dur as f64),
+        JsValue::from_str(wave),
+        JsValue::from(amp as f64),
+    ]) {
+        return;
+    }
+    if !ensure_init() {
+        return;
+    }
+    AUDIO.with(|a| {
+        if let Some(state) = a.borrow().as_ref() {
+            let ctx = &state.ctx;
+            let (Ok(osc), Ok(g)) = (ctx.create_oscillator(), ctx.create_gain()) else { return };
+            osc.set_type(match wave {
+                "square" => OscillatorType::Square,
+                "saw" | "sawtooth" => OscillatorType::Sawtooth,
+                "triangle" => OscillatorType::Triangle,
+                _ => OscillatorType::Sine,
+            });
+            osc.frequency().set_value(freq);
+            let t = ctx.current_time();
+            let d = (dur.max(0.01)) as f64;
+            g.gain().set_value_at_time(0.0001, t).ok();
+            g.gain().linear_ramp_to_value_at_time(amp.max(0.0001), t + 0.005).ok();
+            g.gain().exponential_ramp_to_value_at_time(0.0001, t + d).ok();
+            if osc.connect_with_audio_node(&g).is_err() || g.connect_with_audio_node(&state.master).is_err() {
+                return;
+            }
+            ctx.resume().ok();
+            osc.start().ok();
+            osc.stop_with_when(t + d + 0.02).ok();
+        }
+    });
+}
+
+/// Non-positional sample playback with a pitch factor (audio_sample_play_flat).
+/// `offset`/`dur` (seconds of source audio, 0 = whole clip) trim a one-shot; the
+/// page passes them to AudioBufferSourceNode.start(0, offset, dur).
+pub fn play_sample_flat(id: usize, vol: f32, looping: bool, pitch: f32, offset: f32, dur: f32) {
+    if remote(&[
+        JsValue::from_str("play"),
+        JsValue::from(id as f64),
+        JsValue::from(vol as f64),
+        JsValue::from_bool(looping),
+        JsValue::from(pitch as f64),
+        JsValue::from(offset as f64),
+        JsValue::from(dur as f64),
+    ]) {
+        return;
+    }
+    play_sample(id, 0.0, 0.0, 0.0, vol, looping);
+}
+
 /// Call a named method on a JS object with f64 arguments.
 /// Uses Reflect so it works regardless of which web-sys bindings are enabled.
 fn js_call(obj: &JsValue, method: &str, args: &[f64]) {
@@ -229,6 +341,9 @@ pub fn set_listener(cry: f32, sry: f32, crx: f32, srx: f32) {
 
 /// Set master output gain.
 pub fn set_master_volume(vol: f32) {
+    if remote(&[JsValue::from_str("master"), JsValue::from(vol as f64)]) {
+        return;
+    }
     AUDIO.with(|a| {
         if let Some(state) = a.borrow().as_ref() {
             state.master.gain().set_value(vol);
@@ -239,6 +354,9 @@ pub fn set_master_volume(vol: f32) {
 /// Load and play BGM from a URL. Uses synchronous XHR + decodeAudioData.
 /// The file is fetched, decoded, and looped automatically.
 pub fn load_bgm(path: &str, vol: f32) {
+    if remote(&[JsValue::from_str("bgm"), JsValue::from_str(path), JsValue::from(vol as f64)]) {
+        return;
+    }
     if !ensure_init() {
         return;
     }
@@ -501,6 +619,15 @@ pub fn add_sample(stereo: &[f32], channels: usize, rate: u32) -> i32 {
 /// If `looping` is true the source will loop until explicitly stopped.
 /// Returns immediately (fire-and-forget for one-shot; ignores return voice id).
 pub fn play_sample(id: usize, x: f32, y: f32, z: f32, vol: f32, looping: bool) {
+    if remote(&[
+        JsValue::from_str("play"),
+        JsValue::from(id as f64),
+        JsValue::from(vol as f64),
+        JsValue::from_bool(looping),
+        JsValue::from(1.0),
+    ]) {
+        return;
+    }
     if !ensure_init() {
         return;
     }
@@ -564,6 +691,9 @@ pub fn resume() {
 
 /// Set BGM volume.
 pub fn set_bgm_volume(vol: f32) {
+    if remote(&[JsValue::from_str("bgm_vol"), JsValue::from(vol as f64)]) {
+        return;
+    }
     AUDIO.with(|a| {
         if let Some(state) = a.borrow_mut().as_mut() {
             if let Some(bgm) = &mut state.bgm {

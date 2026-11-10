@@ -1,4 +1,4 @@
-# Radio firmware baked into the Raspberry Pi kernel
+# Radio firmware baked into the kernel
 
 These binaries are loaded into the CYW43455 Wi-Fi/Bluetooth chip of the
 Raspberry Pi 5 by `src/arch/aarch64/wifi.rs` (include_bytes!). They are the
@@ -16,3 +16,17 @@ the `LICENCE.cypress` terms of the linux-firmware tree (redistribution of
 unmodified binaries allowed; no reverse engineering). The NVRAM text is from
 Raspberry Pi. They are not part of the Ling sources and are not covered by
 Ling's licence.
+
+## Intel Wi-Fi 6 AX201 (x86-64)
+
+`iwlwifi-QuZ-a0-hr-b0-72.ucode` (firmware 72.daa05125.0, 1 370 356 bytes,
+SHA-256 3238e87e9d87b8ad5a9f6c8640c9578f4121c3895413d3a104add5d5267a0c07) is
+loaded into the Intel Wi-Fi 6 AX201 -- the Tiger Lake PCH CNVi MAC (PCI
+8086:43F0 / 8086:A0F0) whose CSR_HW_REV reads 0x351 ("QuZ"), with the HR RF
+module -- by `src/drivers/iwlwifi.rs` (include_bytes!). It is the unmodified
+file from linux-firmware (`intel/iwlwifi/`, fetched from the
+gitlab.com/kernel-firmware/linux-firmware mirror), the one Linux 6.1's
+iwlwifi loads on that machine. It is Intel's redistributable binary,
+licensed under `LICENCE.iwlwifi_firmware` (copied here from linux-firmware's
+`LICENSES/`): redistribution of the unmodified binary is allowed with that
+notice; no reverse engineering. It is not part of the Ling sources.

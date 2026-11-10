@@ -440,7 +440,7 @@ unsafe fn mark_value(v: u64, work: &mut Vec<*mut ListBuf>) {
 unsafe fn mark_word(w: u64, work: &mut Vec<*mut ListBuf>) {
     if (w >> 56) == 0x7F {
         mark_value(w, work);
-    } else if w >= GC_HDR as u64 && w < 1 << 32 {
+    } else if w >= GC_HDR as u64 && w < (crate::mm::heap::HEAP_PAGE_LIMIT as u64) << 12 {
         if let Some(h) = gc_header(w as usize - GC_HDR, GK_STR) {
             gc_set_mark(h);
         }
@@ -877,6 +877,15 @@ pub fn unpark_scope(id: u64) {
     unsafe { APP_DEPTH = p.depth };
 }
 
+/// Drop a parked scope WITHOUT restoring it: the app that owned it was killed
+/// (Task Manager), so its globals/store are freed here and the collector stops
+/// seeing them as roots. Never called for the app that currently has the screen.
+pub fn drop_park(id: u64) {
+    if let Some(i) = parked().iter().position(|p| p.id == id) {
+        parked().remove(i); // p.g / p.s / p.a drop, freeing those GC roots
+    }
+}
+
 static mut APP_DEPTH: u32 = 0;
 
 /// The running program's command line, what `get_args()` reports: empty for a
@@ -1305,6 +1314,8 @@ pub(crate) fn report_missing(name: &[u8]) {
 
 /// Generic by-name builtin call emitted by the AOT for every builtin it doesn't
 /// inline: `name` (UTF-8, `name_len` bytes) and `args_len` NaN-boxed arguments.
+/// While the opt-in profiler (`prof.rs`) runs, the outermost call is timed; otherwise this is
+/// one flag read more than before.
 #[no_mangle]
 pub unsafe extern "C" fn ling_builtin(
     name_ptr: *const u8,
@@ -1312,8 +1323,45 @@ pub unsafe extern "C" fn ling_builtin(
     args_ptr: *const u64,
     args_len: usize,
 ) -> u64 {
+    // 3-D triangles wait in a batch (drawn together over every core); anything
+    // that could look at or change the pixels draws them first.
+    if crate::drivers::g3d::PENDING {
+        let canon = crate::compat::canon(core::slice::from_raw_parts(name_ptr, name_len));
+        if !crate::drivers::g3d::batch_ok(canon) {
+            let t0 = if crate::prof::on() { crate::arch::timer::now_us() } else { 0 };
+            crate::drivers::g3d::sync_pending();
+            if t0 != 0 {
+                crate::prof::add(crate::prof::G3D, crate::arch::timer::now_us().saturating_sub(t0));
+            }
+        }
+    }
+    if !crate::prof::on() || crate::coro::in_coro() {
+        return ling_builtin_inner(name_ptr, name_len, args_ptr, args_len);
+    }
+    if !crate::prof::enter() {
+        // nested inside another builtin: it is part of that one's time
+        let r = ling_builtin_inner(name_ptr, name_len, args_ptr, args_len);
+        crate::prof::leave();
+        return r;
+    }
+    let canon = crate::compat::canon(core::slice::from_raw_parts(name_ptr, name_len));
+    let t0 = crate::arch::timer::now_us();
+    let r = ling_builtin_inner(name_ptr, name_len, args_ptr, args_len);
+    let dt = crate::arch::timer::now_us().saturating_sub(t0);
+    crate::prof::builtin_done(canon, name_hash(canon), dt);
+    crate::prof::leave();
+    r
+}
+
+unsafe fn ling_builtin_inner(
+    name_ptr: *const u8,
+    name_len: usize,
+    args_ptr: *const u64,
+    args_len: usize,
+) -> u64 {
     ensure_init();
-    let name = core::slice::from_raw_parts(name_ptr, name_len);
+    // a localized spelling (사인, 창열림, ...) answers as its canonical builtin
+    let name = crate::compat::canon(core::slice::from_raw_parts(name_ptr, name_len));
     let args: &[u64] = if args_len == 0 { &[] } else { core::slice::from_raw_parts(args_ptr, args_len) };
     if TRACE {
         trace_first(name);
@@ -1332,6 +1380,7 @@ pub unsafe extern "C" fn ling_builtin(
             3 => crate::lingdaw::dispatch(name, args),
             4 => crate::netapi::dispatch(name, args),
             5 => crate::lingrec::dispatch(name, args),
+            6 => crate::compat::dispatch(name, args),
             16..=23 => match (*(&raw const EXT))[(stage - 16) as usize] {
                 Some(f) => f(name, args),
                 None => None,
@@ -1364,6 +1413,10 @@ pub unsafe extern "C" fn ling_builtin(
     }
     if let Some(v) = crate::lingrec::dispatch(name, args) {
         DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 5);
+        return v;
+    }
+    if let Some(v) = crate::compat::dispatch(name, args) {
+        DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 6);
         return v;
     }
     for (i, f) in (*(&raw const EXT)).iter().enumerate() {

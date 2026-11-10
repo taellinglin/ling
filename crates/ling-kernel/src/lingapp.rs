@@ -35,6 +35,42 @@ struct Window {
     open: bool,
     clip: Option<[i32; 4]>,
     black: bool,
+    /// Scaled window (`open_window(w, h, title, 2)`): the screen size the w×h
+    /// buffer is aspect-fitted to at present(); None = buffer is the screen.
+    screen: Option<(usize, usize)>,
+}
+
+/// present() scratch for scaled windows: the screen-sized frame.
+static mut SCALE_BUF: Vec<u32> = Vec::new();
+/// The screen-fit column map (source size, scaled width) -> source x per output column.
+static mut XMAP: ((usize, usize), Vec<u32>) = ((0, 0), Vec::new());
+
+/// Where a w×h buffer lands on an sw×sh screen, aspect kept: (x, y, dw, dh).
+fn fit_rect(w: usize, h: usize, sw: usize, sh: usize) -> (usize, usize, usize, usize) {
+    if w == 0 || h == 0 {
+        return (0, 0, sw, sh);
+    }
+    if sw * h > sh * w {
+        let dw = (sh * w / h).max(1);
+        ((sw - dw) / 2, 0, dw, sh)
+    } else {
+        let dh = (sw * h / w).max(1);
+        (0, (sh - dh) / 2, sw, dh)
+    }
+}
+
+/// Screen-space pointer → the window buffer's coordinates.
+fn to_buffer_coords(x: f64, y: f64) -> (f64, f64) {
+    match win() {
+        Some(w) if w.screen.is_some() && x > -1000.0 => {
+            let (sw, sh) = w.screen.unwrap();
+            let (ox, oy, dw, dh) = fit_rect(w.w, w.h, sw, sh);
+            let bx = ((x - ox as f64) * w.w as f64 / dw as f64).clamp(0.0, (w.w - 1) as f64);
+            let by = ((y - oy as f64) * w.h as f64 / dh as f64).clamp(0.0, (w.h - 1) as f64);
+            (bx, by)
+        },
+        _ => (x, y),
+    }
 }
 
 struct Glyph {
@@ -55,6 +91,13 @@ static mut WIN: Option<Window> = None;
 /// frames presented so far (`frame_count`).
 static mut GFX_COLOR: u32 = 0xFF_FFFF;
 static mut FRAMES: u64 = 0;
+/// Was the left button down when the last frame was presented? (`ui_button`
+/// clicks on the press edge, like the host's `mouse_was_down`.)
+static mut MOUSE_WAS_DOWN: bool = false;
+/// The left button as this frame's first `ui_button` saw it: every button in
+/// a frame agrees, and exactly that value becomes `MOUSE_WAS_DOWN` at present
+/// (sampling at present instead dropped a press landing mid-frame).
+static mut FRAME_DOWN: Option<bool> = None;
 static mut FONTS: Vec<Font> = Vec::new();
 /// Per font: the font (and size factor) that draws the chars it has no glyph for (`font_fallback`).
 static mut FONT_FB: Vec<Option<(usize, f32)>> = Vec::new();
@@ -299,12 +342,40 @@ fn px_rrect(outline: bool, a: Arg) {
     let x1 = (libm::ceil(x + ww) as i32).min(cx1);
     let y0 = (libm::floor(y) as i32).max(cy0);
     let y1 = (libm::ceil(y + hh) as i32).min(cy1);
+    // The signed distance only matters near the border. Each row has a middle
+    // span where d <= e (filled: e = -0.5 -> coverage 1; outline: e = -1 ->
+    // coverage 0): with qy fixed, d = max(qx, qy) - rad when qy <= 0, else
+    // sqrt(max(qx,0)^2 + qy^2) - rad, so that span is |px| <= hx - rad + qmax
+    // with qmax = rad + e (qy <= 0) or sqrt((rad + e)^2 - qy^2). A full-screen
+    // panel was 1.7 ms of sqrt per call on the Z590; now it is a plain fill.
+    let inner = if outline { rad - 1.0 } else { rad - 0.5 };
+    let (cr, cg, cb) = (r.min(255), g.min(255), b.min(255));
+    let solid = (cr << 16) | (cg << 8) | cb;
     for yy in y0..y1 {
-        for xx in x0..x1 {
+        let py = (yy as f64 + 0.5) - ccy;
+        let qy = libm::fabs(py) - (hy - rad);
+        let (mut sx0, mut sx1) = (x1, x1); // [sx0, sx1): the middle span
+        if qy <= inner {
+            let qmax = if qy <= 0.0 { inner } else { libm::sqrt(inner * inner - qy * qy) };
+            let lim = hx - rad + qmax - 1e-6;
+            if lim >= 0.0 {
+                sx0 = (libm::ceil(ccx - lim - 0.5) as i32).clamp(x0, x1);
+                sx1 = ((libm::floor(ccx + lim - 0.5) as i32) + 1).clamp(sx0, x1);
+            }
+        }
+        if !outline && sx0 < sx1 {
+            let row = (yy * bw) as usize;
+            if al >= 0.999 {
+                w.buf[row + sx0 as usize..row + sx1 as usize].fill(solid);
+            } else {
+                for i in row + sx0 as usize..row + sx1 as usize {
+                    w.buf[i] = blend(w.buf[i], cr, cg, cb, al);
+                }
+            }
+        }
+        for xx in (x0..sx0).chain(sx1..x1) {
             let px = (xx as f64 + 0.5) - ccx;
-            let py = (yy as f64 + 0.5) - ccy;
             let qx = libm::fabs(px) - (hx - rad);
-            let qy = libm::fabs(py) - (hy - rad);
             let (mx, my) = (qx.max(0.0), qy.max(0.0));
             let d = libm::sqrt(mx * mx + my * my) + qx.max(qy).min(0.0) - rad;
             let cov = if outline {
@@ -459,11 +530,24 @@ fn map_font_args(args: &[u64], at: &[usize]) -> Vec<u64> {
     v
 }
 
-/// Load a font for the running program; its handle in that program.
+/// Fonts `font_load` could not find (each is reported once).
+static mut FONT_MISSING: Vec<String> = Vec::new();
+
+/// Load a font for the running program; its handle in that program. A font file that is not there
+/// (not copied to the card, say) is reported on the console once, and the system UI font stands in so
+/// the program's text still shows instead of vanishing.
 fn font_load(path: &str) -> f64 {
-    let g = font_load_global(path);
+    let mut g = font_load_global(path);
     if g < 0.0 {
-        return -1.0;
+        let miss = unsafe { &mut *(&raw mut FONT_MISSING) };
+        if !miss.iter().any(|p| p == path) {
+            miss.push(String::from(path));
+            crate::console_write(alloc::format!("font_load: {path} is missing or unreadable -- drawing with the system UI font\n").as_bytes());
+        }
+        match ui_font() {
+            Some(u) => g = u as f64,
+            None => return -1.0,
+        }
     }
     let m = font_map();
     let g = g as usize;
@@ -481,7 +565,16 @@ fn font_load_global(path: &str) -> f64 {
     if let Some(&i) = paths.get(&key) {
         return i as f64;
     }
-    let Some(bytes) = crate::vfs::read(path) else { return -1.0 };
+    // a host-absolute path (C:/.../fonts/X.ttf, /usr/share/...) means nothing
+    // here: look for the same file name with the program's own files instead
+    let bytes = crate::vfs::read(path).or_else(|| {
+        let base = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        if base == path {
+            return None;
+        }
+        crate::vfs::read(&alloc::format!("assets/fonts/{base}")).or_else(|| crate::vfs::read(base))
+    });
+    let Some(bytes) = bytes else { return -1.0 };
     let hashes = unsafe { &mut *(&raw mut FONT_HASHES) };
     let h = (bytes.len(), fnv64(&bytes));
     if let Some(&i) = hashes.get(&h) {
@@ -708,6 +801,7 @@ fn px_text(args: &[u64]) {
     }
     let baseline = libm::roundf(y + ascent(f, px)) as i32;
     let bw = w.w as i32;
+    let crisp = unsafe { TEXT_CRISP };
     let mut pen = 0.0f32;
     for c in text.chars() {
         // the char's own font: this one, or the fallback that has the glyph
@@ -721,9 +815,11 @@ fn px_text(args: &[u64]) {
             break;
         }
         let gl = gf.cache.entry((c, gpx.to_bits())).or_insert_with(|| {
+            crate::prof::count(crate::prof::C_GLYPHS, 1);
             let (m, cov) = gf.fd.rasterize(c, gpx);
             Glyph { w: m.width, h: m.height, xmin: m.xmin, ymin: m.ymin, cov }
         });
+        crate::prof::count(crate::prof::C_CHARS, 1);
         let ox = gx0 + gl.xmin;
         let oy = baseline - gl.ymin - gl.h as i32;
         for gy in 0..gl.h {
@@ -738,11 +834,11 @@ fn px_text(args: &[u64]) {
                     continue;
                 }
                 let cv = gl.cov[gy * gl.w + gx];
-                if cv == 0 {
+                if cv == 0 || (crisp && cv < 128) {
                     continue;
                 }
                 let i = row + xx as usize;
-                w.buf[i] = if cv == 255 { col } else { blend(w.buf[i], r, g, b, cv as f32 / 255.0) };
+                w.buf[i] = if cv == 255 || crisp { col } else { blend(w.buf[i], r, g, b, cv as f32 / 255.0) };
             }
         }
     }
@@ -812,6 +908,7 @@ fn display_set(w: u32, h: u32) -> bool {
         return false;
     }
     let (fw, fh) = (framebuffer::width() as usize, framebuffer::height() as usize);
+    ui_end();
     unsafe {
         if let Some(win) = (*(&raw mut WIN)).as_mut() {
             win.buf = vec![0u32; fw * fh];
@@ -824,18 +921,25 @@ fn display_set(w: u32, h: u32) -> bool {
     true
 }
 
-fn open_window(req_w: f64, req_h: f64) {
+fn open_window(req_w: f64, req_h: f64, mode: f64) {
     // LingOS: the window is the whole screen (the safe area); fall back to the
     // requested size when there's no framebuffer, so the program still runs.
-    let (w, h) = if framebuffer::available() {
-        (framebuffer::width() as usize, framebuffer::height() as usize)
+    // Mode 2 (scaled): keep the requested buffer and aspect-fit it to the screen.
+    let scaled = mode > 1.5 && framebuffer::available() && req_w >= 1.0 && req_h >= 1.0;
+    let (w, h, screen) = if scaled {
+        let sc = (framebuffer::width() as usize, framebuffer::height() as usize);
+        (req_w as usize, req_h as usize, Some(sc))
+    } else if framebuffer::available() {
+        (framebuffer::width() as usize, framebuffer::height() as usize, None)
     } else {
-        (req_w.max(1.0) as usize, req_h.max(1.0) as usize)
+        (req_w.max(1.0) as usize, req_h.max(1.0) as usize, None)
     };
+    ui_reset();
     unsafe {
+        (*(&raw mut CURSOR_HIDE_APP)).clear();
         core::ptr::write(
             &raw mut WIN,
-            Some(Window { buf: vec![0u32; w * h], w, h, open: true, clip: None, black: false }),
+            Some(Window { buf: vec![0u32; w * h], w, h, open: true, clip: None, black: false, screen }),
         );
     }
     // The window owns the screen now: stop the text console drawing over it,
@@ -911,13 +1015,15 @@ fn app_run(name: &str) -> bool {
     crate::console_write(name.as_bytes());
     crate::console_write(b"\n");
     let sp = unsafe { fresh_stack(top) };
+    unsafe { PEN_ALPHA = 1.0 };
     unsafe {
-        *(&raw mut ACTIVE_APP) = Some(AppCtx { name: String::from(name), stack, top, sp, win: None, dot: false, scope: None, park: 0, done: false });
+        *(&raw mut ACTIVE_APP) = Some(AppCtx { name: String::from(name), stack, top, sp, win: None, dot: false, scope: None, park: 0, buf_mode: false, buf: String::new(), done: false, esc_parks: false });
         *(&raw mut PENDING_ENTRY) = Some(entry);
         // Runs the app on its stack until it suspends or returns.
         ling_switch_stack(&raw mut HOST_SP, sp);
     }
     app_came_back(host);
+    unsafe { PEN_ALPHA = 1.0 };
     true
 }
 
@@ -943,7 +1049,16 @@ struct AppCtx {
     scope: Option<crate::vfs::Scope>,
     /// `lingrt::park_scope` ticket while suspended.
     park: u64,
+    /// The app's text-field buffer state while suspended: whole-field mode
+    /// (`text_set`) and the buffer. Saved on suspend, restored on resume, so a
+    /// text box left open across Alt+Tab keeps working -- and so the mode never
+    /// leaks onto the desktop, whose boxes want the typed-since-last behavior.
+    buf_mode: bool,
+    buf: String,
     done: bool,
+    /// `os_option("esc_minimizes", 1)`: an Esc the app does not use parks it
+    /// (like Minimize) instead of closing it.
+    esc_parks: bool,
 }
 
 /// The desktop's state while an app has the screen.
@@ -1089,6 +1204,14 @@ fn input_reset() {
     input.text.clear();
     input.quit = false;
     input.esc = 0;
+    // Stale key/composition state must not leak across a session boundary
+    // (sign-in -> run app -> log out): a USB key-up report lost during the
+    // teardown window would otherwise leave `held` marking a usage down, and a
+    // half-finished input-method composition would survive. Both are cleared
+    // here, where every app launch/return/suspend already passes through.
+    input.held = [0; 8];
+    input.prev_held = [0; 8];
+    crate::drivers::ime::reset();
 }
 
 /// Back on the desktop's stack after an app suspended or returned.
@@ -1103,6 +1226,15 @@ fn app_came_back(host: Host) {
         }
     }
     input_reset();
+    // The desktop's text boxes want the typed-since-last behavior: drop any
+    // whole-field (`text_set`) buffer an app left on, so one keypress can't
+    // repeat into the sign-in password box after running an app (the asterisk
+    // flood). The next app re-arms its own mode.
+    unsafe {
+        let input = &mut *(&raw mut INPUT);
+        input.buf_mode = false;
+        input.buf.clear();
+    }
     if let Some(c) = ctx {
         crate::console_write(b"app: ");
         crate::console_write(c.name.as_bytes());
@@ -1111,6 +1243,8 @@ fn app_came_back(host: Host) {
             // its isolates and workers end with it
             crate::coro::kill_owner(&c.name);
             crate::mm::frame::free_frames(c.stack, APP_STACK_ORDER);
+            // and LingAnime's paint document with it
+            crate::drivers::artpaint::app_ended(&c.name);
         } else {
             crate::console_write(b" suspended\n");
             parked_apps().push(c);
@@ -1129,6 +1263,7 @@ fn app_resume(name: &str) -> bool {
         ling_switch_stack(&raw mut HOST_SP, sp);
     }
     app_came_back(host);
+    unsafe { PEN_ALPHA = 1.0 };
     true
 }
 
@@ -1136,10 +1271,21 @@ fn app_resume(name: &str) -> bool {
 /// desktop; continues here when the desktop resumes it.
 fn app_suspend() {
     let Some(a) = active_app() else { return };
+    // Snapshot the app's last frame for its taskbar tile, before the window is
+    // taken aside. Its whole buffer scales into a 124x64 thumbnail.
+    let aname = a.name.clone();
+    let dims = win().map(|w| (w.w, w.h));
+    if let Some((ww, wh)) = dims {
+        thumb_store(alloc::format!("app:{aname}"), 0, 0, ww, wh, 124, 64);
+    }
     a.win = unsafe { core::ptr::replace(&raw mut WIN, None) };
     a.dot = unsafe { CURSOR_DOT };
     a.scope = Some(crate::vfs::take_scope());
     a.park = crate::lingrt::park_scope();
+    // Keep the app's own text-field buffer; the desktop gets a clean slate.
+    let input = unsafe { &mut *(&raw mut INPUT) };
+    a.buf_mode = input.buf_mode;
+    a.buf = core::mem::take(&mut input.buf);
     let sp_slot = &raw mut a.sp;
     unsafe { ling_switch_stack(sp_slot, HOST_SP) };
     // Resumed: the context is back in ACTIVE_APP (it moved meanwhile).
@@ -1152,6 +1298,10 @@ fn app_suspend() {
             crate::vfs::restore_scope(s);
         }
         crate::lingrt::unpark_scope(a.park);
+        // Put the app's text-field buffer back (a box left open stays usable).
+        let input = unsafe { &mut *(&raw mut INPUT) };
+        input.buf_mode = a.buf_mode;
+        input.buf = core::mem::take(&mut a.buf);
     }
     input_reset();
 }
@@ -1178,8 +1328,24 @@ pub fn active_app_name() -> String {
     }
 }
 
-fn apps_running() -> Vec<String> {
+pub fn apps_running() -> Vec<String> {
     parked_apps().iter().map(|a| a.name.clone()).collect()
+}
+
+/// End a suspended app (Task Manager). Mirrors the `app_came_back` done-path:
+/// its isolates/workers die, its parked Ling scope and 2 MiB stack are freed.
+/// Only ever a *parked* app (never the one with the screen), so it is not
+/// executing while we tear it down.
+fn app_kill(name: &str) -> bool {
+    let Some(i) = parked_apps().iter().position(|a| a.name == name) else { return false };
+    let c = parked_apps().remove(i);
+    crate::console_write(b"app: ended ");
+    crate::console_write(c.name.as_bytes());
+    crate::console_write(b" (task manager)\n");
+    crate::coro::kill_owner(&c.name);
+    crate::lingrt::drop_park(c.park);
+    crate::mm::frame::free_frames(c.stack, APP_STACK_ORDER);
+    true
 }
 
 // ── Network settings (Settings > Network) ────────────────────────────────────
@@ -1358,6 +1524,29 @@ fn user_login(name: &str, password: &str) -> bool {
     if !crate::fs::users::verify(name, password) {
         return false;
     }
+    // two-factor accounts: the password alone is not enough (`user_login_code`)
+    if crate::fs::twofa::enabled(name) {
+        crate::fs::users::set_last_error(crate::fs::users::TWOFA_NEEDED);
+        return false;
+    }
+    user_session(name, password)
+}
+
+/// Sign in with the password and the authenticator code (or a recovery code).
+fn user_login_code(name: &str, password: &str, code: &str) -> bool {
+    if !crate::fs::users::verify(name, password) {
+        return false;
+    }
+    if crate::fs::twofa::enabled(name) && !crate::fs::twofa::check(name, code) {
+        if crate::fs::twofa::locked_for_ms(name) > 0 {
+            crate::fs::users::set_last_error("too many wrong codes -- wait a little, then use the newest code");
+        } else if crate::fs::twofa::last_was_replay() {
+            crate::fs::users::set_last_error("that code was just used -- wait for the next one (a new code every 30 s)");
+        } else {
+            crate::fs::users::set_last_error(crate::fs::users::TWOFA_WRONG);
+        }
+        return false;
+    }
     user_session(name, password)
 }
 
@@ -1393,14 +1582,18 @@ fn user_reset(name: &str, password: &str) -> bool {
     if !all.iter().any(|u| u == name) {
         // a reset for an account that is not on this card: make it with this password
         if !user_create(name, password) {
-            users::set_last_error("could not create the account (storage write failed)");
+            if !matches!(users::last_verify_error(), users::HASH_UNSTABLE | users::RECORD_READBACK) {
+                users::set_last_error("could not create the account (storage write failed)");
+            }
             return false;
         }
         return true;
     }
     if !users::verify(name, password) {
         if !users::set_password(name, password) {
-            users::set_last_error("could not save the new password (storage write failed)");
+            if !matches!(users::last_verify_error(), users::HASH_UNSTABLE | users::RECORD_READBACK) {
+                users::set_last_error("could not save the new password (storage write failed)");
+            }
             return false;
         }
         crate::console_write(b"users: new password set for ");
@@ -1409,7 +1602,10 @@ fn user_reset(name: &str, password: &str) -> bool {
     }
     users::clear_reset(name, &all);
     if !user_login(name, password) {
-        users::set_last_error("the new password was saved but did not check out -- try signing in with it");
+        // a two-factor account still needs its code: the sign-in screen asks next
+        if users::last_verify_error() != users::TWOFA_NEEDED {
+            users::set_last_error("the new password was saved but did not check out -- try signing in with it");
+        }
         return false;
     }
     true
@@ -1439,8 +1635,37 @@ pub fn app_folder(name: &str) -> String {
         "lingmodeler" => "LingModeler",
         "horizon" => "Horizon",
         "wallet" => "LingWallet",
+        "lingforfun" => "LingForFun",
+        "linganime" => "LingAnime",
         n => n,
     })
+}
+
+/// Give a console-launched app the same folder environment a desktop launch
+/// gives it: its image folder (`apps/<name>`, so `font_load("assets/...")` and
+/// other relative reads find its bundled files) and its home save dirs
+/// (`Programs/<App>` as the data root, `Projects/<App>`). Without this a
+/// built-in app started by typing its name at the console couldn't find its
+/// own fonts/assets. `console_app_leave` puts the console's roots back.
+pub fn console_app_enter(name: &str) {
+    let folder = app_folder(name);
+    if crate::vfs::ready() {
+        let home = crate::vfs::home();
+        let programs = alloc::format!("{home}/Programs/{folder}");
+        let projects = alloc::format!("{home}/Projects/{folder}");
+        crate::vfs::mkdir(&programs);
+        crate::vfs::mkdir(&projects);
+        crate::vfs::set_root(&programs);
+        crate::vfs::set_projects_root(&projects);
+    }
+    crate::vfs::set_image_root(&alloc::format!("apps/{name}"));
+}
+
+/// Restore the console's default roots after a console-launched app returns.
+pub fn console_app_leave() {
+    crate::vfs::set_root("");
+    crate::vfs::set_projects_root("");
+    crate::vfs::set_image_root("");
 }
 
 /// Run `body` with a fresh window slot and cursor state, restoring the
@@ -1511,7 +1736,9 @@ fn px_text8(args: &[u64]) {
 static WALL_BMP: &[u8] = include_bytes!("../assets/ling_country_wallpaper.bmp");
 static mut WALL: Option<(usize, usize, Vec<u32>)> = None;
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(target_arch = "x86_64")]
+use crate::drivers::wallpaper::LING_COUNTRY_BMP as WALL_BMP;
+
 fn wall_scaled(dw: usize, dh: usize) -> Option<Vec<u32>> {
     let b = WALL_BMP;
     let rd32 = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
@@ -1554,14 +1781,18 @@ fn os_wallpaper() -> bool {
     let Some(w) = win() else { return false };
     let cache = unsafe { &mut *(&raw mut WALL) };
     if !matches!(cache, Some((cw, ch, _)) if *cw == w.w && *ch == w.h) {
-        #[cfg(target_arch = "aarch64")]
-        {
-            *cache = wall_scaled(w.w, w.h).map(|v| (w.w, w.h, v));
-        }
+        *cache = wall_scaled(w.w, w.h).map(|v| (w.w, w.h, v));
     }
     match cache {
         Some((_, _, px)) if px.len() == w.buf.len() => {
-            w.buf.copy_from_slice(px);
+            // 8 MB at 1080p, every frame: in bands over the cores
+            let (chunks, per) = crate::par::row_chunks(w.h, 32);
+            let dst = crate::par::Shared(w.buf.as_mut_ptr());
+            let (src, ww, total) = (&px[..], w.w, w.buf.len());
+            crate::par::for_each(chunks, &|c: usize| {
+                let (a, b) = ((c * per * ww).min(total), ((c + 1) * per * ww).min(total));
+                unsafe { core::ptr::copy_nonoverlapping(src.as_ptr().add(a), dst.get().add(a), b - a) };
+            });
             true
         },
         _ => false,
@@ -1584,9 +1815,21 @@ const EMB_GRAPHICS: [u8; 8] = [0x38, 0x44, 0x44, 0x38, 0x10, 0x38, 0x7C, 0x00];
 const EMB_MODEL: [u8; 8] = [0x3E, 0x46, 0xFA, 0x8A, 0x8C, 0x88, 0xF8, 0x00];
 const EMB_PROGRAM: [u8; 8] = [0xFF, 0x81, 0xA1, 0x91, 0xA1, 0x81, 0xFF, 0x00];
 const EMB_SCRIPT: [u8; 8] = [0x24, 0x42, 0x81, 0x00, 0x81, 0x42, 0x24, 0x00];
+const EMB_ARCHIVE: [u8; 8] = [0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00];
 
 pub(crate) fn gfx_color() -> u32 {
     unsafe { GFX_COLOR }
+}
+
+/// The pen's `set_alpha` opacity (0..1) -- 3-D triangles take it too.
+pub(crate) fn pen_alpha() -> f32 {
+    unsafe { PEN_ALPHA }
+}
+
+/// The pointer in the app window's pixels (`mouse_ray`).
+pub(crate) fn app_mouse_xy() -> (f64, f64) {
+    let (x, y, _) = app_mouse_state();
+    (x, y)
 }
 
 /// The app window's back buffer (`0xRRGGBB`), width and height -- the
@@ -1595,6 +1838,18 @@ pub(crate) fn surface() -> Option<(&'static mut [u32], usize, usize)> {
     let w = win()?;
     let (ww, hh) = (w.w, w.h);
     Some((&mut w.buf[..], ww, hh))
+}
+
+/// The app window's `px_clip` rectangle [x0, y0, x1, y1) (the whole window when unclipped) -- for
+/// `drivers::artpaint`, whose drawing calls honour it like the host's.
+pub(crate) fn surface_clip() -> [i32; 4] {
+    match win() {
+        Some(w) => {
+            let (x0, y0, x1, y1) = clip_box(w);
+            [x0, y0, x1, y1]
+        },
+        None => [0, 0, 0, 0],
+    }
 }
 
 /// A loaded font's face (`font_load` id), for glyph textures.
@@ -1645,7 +1900,8 @@ fn hsl_rgb(h: f64, s: f64, l: f64) -> u32 {
 fn put_clipped(w: &mut Window, x: i64, y: i64, c: u32) {
     let (cx0, cy0, cx1, cy1) = clip_box(w);
     if x >= cx0 as i64 && y >= cy0 as i64 && x < cx1 as i64 && y < cy1 as i64 {
-        w.buf[y as usize * w.w + x as usize] = c;
+        let i = y as usize * w.w + x as usize;
+        w.buf[i] = pen(w.buf[i], c);
     }
 }
 
@@ -1657,7 +1913,8 @@ fn hline(w: &mut Window, x0: i64, x1: i64, y: i64, c: u32) {
     let (xa, xb) = (x0.max(cx0 as i64), x1.min(cx1 as i64 - 1));
     let row = y as usize * w.w;
     for x in xa..=xb {
-        w.buf[row + x as usize] = c;
+        let i = row + x as usize;
+        w.buf[i] = pen(w.buf[i], c);
     }
 }
 
@@ -1716,9 +1973,25 @@ fn outline_circle(w: &mut Window, cx: i64, cy: i64, r: i64, c: u32) {
     }
 }
 
+/// `set_alpha(a)`: the pen's opacity for the gfx-style drawing calls (the host
+/// gfx state's `alpha`); 1 = opaque, the default.
+static mut PEN_ALPHA: f32 = 1.0;
+
+/// `c` laid over `dst` at the pen's opacity.
+#[inline]
+fn pen(dst: u32, c: u32) -> u32 {
+    let a = unsafe { PEN_ALPHA };
+    if a >= 0.999 {
+        c
+    } else {
+        blend(dst, (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff, a)
+    }
+}
+
 fn put(w: &mut Window, x: i64, y: i64, c: u32) {
     if x >= 0 && y >= 0 && (x as usize) < w.w && (y as usize) < w.h {
-        w.buf[y as usize * w.w + x as usize] = c;
+        let i = y as usize * w.w + x as usize;
+        w.buf[i] = pen(w.buf[i], c);
     }
 }
 
@@ -1752,19 +2025,31 @@ fn file_kind(name: &str, is_dir: bool) -> (u32, Option<&'static [u8; 8]>) {
     }
     let l = name.to_ascii_lowercase();
     let ext = |e: &str| l.ends_with(e);
-    if ext(".bmp") || ext(".png") {
+    if ext(".bmp") || ext(".png") || ext(".jpg") || ext(".jpeg") || ext(".webp") {
         (0x5AC06A, Some(&EMB_PHOTO))
-    } else if ext(".svg") {
+    } else if ext(".svg") || ext(".svgz") {
         (0xB06AE0, Some(&EMB_GRAPHICS))
-    } else if ext(".wav") || ext(".mp3") || ext(".ogg") || ext(".flac") || ext(".mid") {
+    } else if ext(".wav") || ext(".mp3") || ext(".ogg") || ext(".flac") || ext(".mid") || ext(".m4a") || ext(".aac") {
         (0xE0A44A, Some(&EMB_MUSIC))
     } else if ext(".mp4") || ext(".mkv") || ext(".webm") || ext(".avi") || ext(".mov") || ext(".gif") {
         (0xE0605A, Some(&EMB_VIDEO))
+    } else if ext(".zip") || ext(".tar") || ext(".gz") || ext(".tgz") || ext(".7z") || ext(".rar") || ext(".xz") || ext(".bz2") || ext(".zst") {
+        (0xC08A4A, Some(&EMB_ARCHIVE))
+    } else if ext(".obj") || ext(".stl") || ext(".glb") || ext(".gltf") || ext(".ply") || ext(".ltm") || ext(".lmesh") {
+        (0x40C0C0, Some(&EMB_MODEL))
+    } else if ext(".pdf") {
+        (0xE05A5A, Some(&EMB_DOC))
+    } else if ext(".ttf") || ext(".otf") || ext(".woff") || ext(".woff2") {
+        (0xB06AE0, Some(&EMB_DOC))
     } else if ext(".ling") {
         (0xF0D050, Some(&EMB_SCRIPT))
-    } else if ext(".obj") || ext(".stl") || ext(".glb") || ext(".gltf") || ext(".ply") {
-        (0x40C0C0, Some(&EMB_MODEL))
-    } else if ext(".txt") || ext(".md") || ext(".json") || ext(".toml") || ext(".csv") || !l.contains('.') {
+    } else if ext(".py") || ext(".js") || ext(".ts") || ext(".rs") || ext(".c") || ext(".h") || ext(".cpp") || ext(".cc") || ext(".go") || ext(".java") || ext(".rb") || ext(".lua") || ext(".sh") || ext(".html") || ext(".css") || ext(".php") || ext(".sql") {
+        (0x6AA8E0, Some(&EMB_SCRIPT))
+    } else if ext(".exe") || ext(".elf") || ext(".o") || ext(".so") || ext(".dll") || ext(".bin") || ext(".app") || ext(".wasm") {
+        (0x8A9BB8, Some(&EMB_PROGRAM))
+    } else if ext(".conf") || ext(".cfg") || ext(".ini") || ext(".yaml") || ext(".yml") || ext(".xml") || ext(".env") || ext(".lock") {
+        (0xA0A0B0, Some(&EMB_SCRIPT))
+    } else if ext(".txt") || ext(".md") || ext(".json") || ext(".toml") || ext(".csv") || ext(".log") || !l.contains('.') {
         (0xC8C0D8, Some(&EMB_DOC))
     } else {
         (0x9B8FB0, None)
@@ -1800,6 +2085,64 @@ fn os_file_icon(args: &[u64]) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Live window thumbnails for the taskbar: key -> (w, h, downscaled pixels).
+static mut THUMBS: BTreeMap<String, (usize, usize, Vec<u32>)> = BTreeMap::new();
+
+/// Store a `tw`x`th` nearest-neighbour downscale of the current window buffer
+/// region (sx,sy,sw,sh) under `key`. Shared by the `os_thumb_capture` builtin
+/// (the desktop snapshots each window right after drawing it) and `app_suspend`
+/// (a full-screen app snapshots its last frame as it parks).
+pub(crate) fn thumb_store(key: String, sx: usize, sy: usize, sw: usize, sh: usize, tw: usize, th: usize) {
+    let Some(w) = win() else { return };
+    let (sw, sh) = (sw.max(1), sh.max(1));
+    let (tw, th) = (tw.clamp(1, 320), th.clamp(1, 320));
+    let mut out = alloc::vec![0u32; tw * th];
+    for ty in 0..th {
+        let srcy = sy + ty * sh / th;
+        if srcy >= w.h {
+            continue;
+        }
+        let row = srcy * w.w;
+        for tx in 0..tw {
+            let srcx = sx + tx * sw / tw;
+            if srcx < w.w {
+                out[ty * tw + tx] = w.buf[row + srcx];
+            }
+        }
+    }
+    unsafe { (*(&raw mut THUMBS)).insert(key, (tw, th, out)) };
+}
+
+/// `os_thumb_capture(key, sx, sy, sw, sh, tw, th)` -> taskbar thumbnail.
+fn os_thumb_capture(args: &[u64]) {
+    let key = args.first().map(|&v| to_string(v)).unwrap_or_default();
+    let n = |i: usize| args.get(i).map(|&v| to_f64(v)).unwrap_or(0.0);
+    thumb_store(
+        key,
+        n(1).max(0.0) as usize,
+        n(2).max(0.0) as usize,
+        n(3).max(1.0) as usize,
+        n(4).max(1.0) as usize,
+        n(5).max(1.0) as usize,
+        n(6).max(1.0) as usize,
+    );
+}
+
+/// `os_thumb_draw(key, tx, ty)`: blit a stored thumbnail 1:1 into the window.
+fn os_thumb_draw(args: &[u64]) {
+    let Some(w) = win() else { return };
+    let key = args.first().map(|&v| to_string(v)).unwrap_or_default();
+    let n = |i: usize| args.get(i).map(|&v| to_f64(v)).unwrap_or(0.0);
+    let (tx, ty) = (n(1) as i64, n(2) as i64);
+    if let Some((tw, th, buf)) = unsafe { (*(&raw const THUMBS)).get(&key) } {
+        for yy in 0..*th {
+            for xx in 0..*tw {
+                put(w, tx + xx as i64, ty + yy as i64, buf[yy * tw + xx]);
             }
         }
     }
@@ -1933,38 +2276,10 @@ pub(crate) fn format_utc(t: u64) -> String {
     alloc::format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60)
 }
 
-/// Seconds since 1970-01-01 UTC, or 0 when the board has no clock to ask.
-/// x86: the CMOS clock; Pi 5: the firmware RTC, read once and carried by the
-/// uptime counter.
+/// Seconds since 1970-01-01 UTC (`crate::clock`: network time, else the
+/// board clock, never earlier than this build).
 fn os_time() -> u64 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let d = crate::arch::rtc::read();
-        if d.year < 2000 {
-            return 0;
-        }
-        let (y, m) = (d.year as i64, d.month as i64);
-        let (yy, mm) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
-        let era = yy.div_euclid(400);
-        let yoe = yy - era * 400;
-        let doy = (153 * mm + 2) / 5 + d.day as i64 - 1;
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        let days = era * 146_097 + doe - 719_468;
-        (days * 86_400 + d.hour as i64 * 3600 + d.minute as i64 * 60 + d.second as i64).max(0) as u64
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        static mut BOOT_EPOCH: Option<u64> = None;
-        static mut TRIED: bool = false;
-        let up = crate::arch::timer::now_ms() / 1000;
-        unsafe {
-            if !TRIED {
-                TRIED = true;
-                BOOT_EPOCH = crate::arch::mailbox::rtc_time().map(|t| (t as u64).saturating_sub(up));
-            }
-            BOOT_EPOCH.map(|b| b + up).unwrap_or(0)
-        }
-    }
+    crate::clock::unix_now()
 }
 
 /// `os_info(key)`: facts about the running system for the desktop's About/tray.
@@ -1978,6 +2293,24 @@ fn pad() -> crate::drivers::hidpad::PadState {
 
 fn fmt_mac(m: [u8; 6]) -> String {
     alloc::format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m[0], m[1], m[2], m[3], m[4], m[5])
+}
+
+/// The machine's name for prompts: the Pi's setup.conf choice, else the
+/// lingfs `/hostname` file (the x86 console's `hostname`), else "lingos".
+fn host_name() -> String {
+    #[cfg(target_arch = "aarch64")]
+    return crate::setup::hostname();
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let mut buf = [0u8; 64];
+        if let Ok(Some(n)) = crate::fs::lingfs::read_file_all("/hostname", &mut buf) {
+            let s = core::str::from_utf8(&buf[..n]).unwrap_or("").trim();
+            if !s.is_empty() {
+                return String::from(s);
+            }
+        }
+        String::from("lingos")
+    }
 }
 
 fn os_info(key: &str) -> String {
@@ -2006,6 +2339,29 @@ fn os_info(key: &str) -> String {
             String::from("PC (x86-64)")
         },
         "memory" => format!("{} MiB free", crate::mm::frame::free_frame_count() * 4 / 1024),
+        // Live counters for the system monitor (kstats.rs); plain numbers.
+        "mem_total" => format!("{}", crate::kstats::total_frames() * 4 / 1024),
+        "net_rx" => format!("{}", crate::kstats::get_net_rx()),
+        "net_tx" => format!("{}", crate::kstats::get_net_tx()),
+        "disk_rd" => format!("{}", crate::kstats::get_disk_rd()),
+        "disk_wr" => format!("{}", crate::kstats::get_disk_wr()),
+        "switches" => format!("{}", crate::kstats::get_switches()),
+        // SoC temperature (whole degrees C) and ARM clock (MHz); "" where the
+        // board reports neither (x86).
+        "temp" => {
+            #[cfg(target_arch = "aarch64")]
+            if let Some(mc) = crate::arch::mailbox::temperature_mc() {
+                return format!("{}", mc / 1000);
+            }
+            String::new()
+        },
+        "clock_mhz" => {
+            #[cfg(target_arch = "aarch64")]
+            if let Some(hz) = crate::arch::mailbox::arm_clock_hz() {
+                return format!("{}", hz / 1_000_000);
+            }
+            String::new()
+        },
         // The configured IPv4 address ("" before DHCP / without a NIC).
         "ip" => {
             let ip = crate::drivers::netstack::self_ip();
@@ -2050,12 +2406,20 @@ fn os_info(key: &str) -> String {
         "mouse" => {
             #[cfg(target_arch = "aarch64")]
             return String::from(if crate::arch::xhci::mouse_ready() { "USB mouse" } else { "none" });
+            #[cfg(target_arch = "x86_64")]
+            if crate::arch::xhci::mouse_ready() {
+                return String::from("USB mouse");
+            }
             #[allow(unreachable_code)]
             String::from("PS/2 mouse")
         },
         "keyboard" => {
             #[cfg(target_arch = "aarch64")]
             return String::from(if crate::arch::xhci::keyboard_ready() { "USB keyboard" } else { "serial only" });
+            #[cfg(target_arch = "x86_64")]
+            if crate::arch::xhci::keyboard_ready() {
+                return String::from("USB keyboard");
+            }
             #[allow(unreachable_code)]
             String::from("PS/2 keyboard")
         },
@@ -2084,6 +2448,299 @@ static mut PERF: bool = false;
 static mut PERF_LAST_US: u64 = 0;
 static mut PERF_FRAME_US: f64 = 0.0;
 static mut PERF_CALLS: u64 = 0;
+// Where present() spends its time (EMA, microseconds): the collector, the
+// isolates / daemons (coro), the SSH + Messenger tasks (sched), the screen copy.
+static mut PERF_GC_US: f64 = 0.0;
+static mut PERF_CORO_US: f64 = 0.0;
+static mut PERF_SCHED_US: f64 = 0.0;
+static mut PERF_BLIT_US: f64 = 0.0;
+// the slowest frame of the last 3 s, so a one-second stall shows up
+static mut PERF_MAX_US: f64 = 0.0;
+static mut PERF_MAX_AT: u64 = 0;
+
+fn perf_ema(slot: *mut f64, v: u64) {
+    unsafe {
+        let cur = *slot;
+        *slot = if cur == 0.0 { v as f64 } else { cur * 0.8 + v as f64 * 0.2 };
+    }
+}
+
+/// The frame's decorations on `w` (the window, or a scaled window's screen-sized frame): a launched
+/// app's title bar, the input-method box and the pointer, at the screen pointer (mx, my). Every
+/// pixel changed goes to `saved` first.
+fn decorate(w: &mut Window, mx: f64, my: f64, pointer: bool, saved: &mut Vec<(usize, u32)>) {
+    // A launched app's title bar (minimize / maximize / close), when shown.
+    if crate::lingrt::app_depth() > 0 {
+        app_bar_draw(w, mx, my, saved);
+    }
+    // The input mode (Ctrl+Space) and what is being composed, bottom right, while not Latin.
+    let pe = crate::drivers::ime::preedit();
+    if crate::drivers::ime::active() || !pe.is_empty() {
+        let mut s = String::from(crate::drivers::ime::label());
+        if !pe.is_empty() {
+            s.push_str("  ");
+            s.push_str(&pe);
+        }
+        let bw = (s.len() as i64 * 8 + 16).min(w.w as i64);
+        let bh = 26i64;
+        let (bx, by) = (w.w as i64 - bw - 10, w.h as i64 - bh - 10);
+        for yy in by.max(0)..(by + bh).min(w.h as i64) {
+            for xx in bx.max(0)..(bx + bw).min(w.w as i64) {
+                let i = yy as usize * w.w + xx as usize;
+                saved.push((i, w.buf[i]));
+                let edge = yy == by || yy == by + bh - 1 || xx == bx || xx == bx + bw - 1;
+                w.buf[i] = if edge { 0x9A53D6 } else { 0x1B1B1B };
+            }
+        }
+        text8(w, bx + 8, by + 5, 0xF5F5F5, &s);
+    }
+    if pointer {
+        use crate::drivers::cursor;
+        let fill = cursor::fill_color(crate::arch::timer::now_ms());
+        // `w` is screen-sized either way (an unscaled window, or a scaled one's screen frame)
+        let (cx, cy) = (mx as i64, my as i64);
+        for dy in 0..cursor::H as i64 {
+            for dx in 0..cursor::W as i64 {
+                let k = cursor::classify(dx as i32, dy as i32);
+                let (x, y) = (cx + dx, cy + dy);
+                if k == 0 || x < 0 || y < 0 || x as usize >= w.w || y as usize >= w.h {
+                    continue;
+                }
+                let i = y as usize * w.w + x as usize;
+                saved.push((i, w.buf[i]));
+                w.buf[i] = if k == 1 { cursor::OUTLINE } else { fill };
+            }
+        }
+    }
+}
+
+/// `cursor_hide()`: the program draws its own pointer, so the system one stays off while that program
+/// runs (the app's name; empty = shown).
+static mut CURSOR_HIDE_APP: String = String::new();
+/// `set_font_antialias(0)`: that program's font_text glyphs are hard-edged (`TEXT_CRISP` while one draws).
+static mut FONT_CRISP_APP: String = String::new();
+static mut TEXT_CRISP: bool = false;
+
+fn cursor_hidden() -> bool {
+    let h = unsafe { &*(&raw const CURSOR_HIDE_APP) };
+    !h.is_empty() && *h == active_app_name()
+}
+
+// ── The UI scale layer (ui_begin / ui_end) ──────────────────────────────────
+//
+// The host's layer (ling/src/runtime/mod.rs): a game lays its HUD out for a
+// virtual canvas of (frame size / scale). FLY for FUN sizes it to the DISPLAY
+// (scale = render height / display height), so its text and frames keep their
+// own pixels while the 3-D frame renders at 720p. While a layer is open every
+// draw goes into a buffer of the virtual size, seeded with the frame stretched
+// to it; get_width / get_height, the mouse and project_3d report virtual
+// coordinates. ui_end keeps the pixels the layer changed: a layer bigger than
+// the frame of a scaled window is laid over the upscaled frame by present(),
+// a smaller one is scaled into the frame, a 1:1 layer is the frame itself.
+
+/// A layer pixel the layer did not draw (window pixels are 0x00RRGGBB).
+const UI_CLEAR: u32 = 0xFF00_0000;
+
+struct UiLayer {
+    /// The frame put aside while the layer is drawn on (1:1: a snapshot of it), its size and clip.
+    real: Vec<u32>,
+    rw: usize,
+    rh: usize,
+    clip: Option<[i32; 4]>,
+    direct: bool,
+}
+
+static mut UI_LAYER: Option<UiLayer> = None;
+/// Layers bigger than the frame, closed this frame, for present(): (pixels -- UI_CLEAR where the
+/// layer drew nothing --, width, height).
+static mut UI_OVERLAYS: Vec<(Vec<u32>, usize, usize)> = Vec::new();
+/// Layer buffers for reuse (a fresh 8 MB buffer for every layer of every frame page-faults).
+static mut UI_POOL: Vec<Vec<u32>> = Vec::new();
+
+fn ui_take(n: usize) -> Vec<u32> {
+    let pool = unsafe { &mut *(&raw mut UI_POOL) };
+    let mut v = match pool.iter().position(|b| b.len() == n).or_else(|| pool.iter().position(|b| b.capacity() >= n)) {
+        Some(i) => pool.swap_remove(i),
+        None => Vec::with_capacity(n),
+    };
+    if v.len() != n {
+        v.resize(n, 0);
+    }
+    v
+}
+
+fn ui_give(v: Vec<u32>) {
+    let pool = unsafe { &mut *(&raw mut UI_POOL) };
+    if pool.len() < 6 && !v.is_empty() {
+        pool.push(v);
+    }
+}
+
+/// present() has laid the overlays on the screen: their buffers go back to the pool.
+fn ui_overlays_done() {
+    let ovs = unsafe { &mut *(&raw mut UI_OVERLAYS) };
+    while let Some((v, _, _)) = ovs.pop() {
+        ui_give(v);
+    }
+}
+
+/// A new window: no layer of the old one carries over.
+fn ui_reset() {
+    unsafe {
+        *(&raw mut UI_LAYER) = None;
+        (*(&raw mut UI_OVERLAYS)).clear();
+    }
+}
+
+/// While a layer bigger than the frame is open: the frame's size and virtual pixels per frame pixel
+/// (vertical) -- `drivers::g3d` projects against the frame's camera and scales to the layer.
+pub(crate) fn ui_layer_scene() -> Option<(usize, usize, f32)> {
+    let l = unsafe { (*(&raw const UI_LAYER)).as_ref() }?;
+    if l.direct {
+        return None;
+    }
+    let w = win()?;
+    Some((l.rw, l.rh, w.h as f32 / l.rh.max(1) as f32))
+}
+
+/// Seed rows of a vw×vh layer with the rw×rh frame, nearest-sampled (over the cores).
+fn ui_stretch(dst: &mut [u32], vw: usize, vh: usize, src: &[u32], rw: usize, rh: usize) {
+    let xs: Vec<u32> = (0..vw).map(|vx| ((vx * rw / vw).min(rw - 1)) as u32).collect();
+    let (chunks, per) = crate::par::row_chunks(vh, 32);
+    let dp = crate::par::Shared(dst.as_mut_ptr());
+    let xs = &xs[..];
+    crate::par::for_each(chunks, &|c: usize| {
+        let d = unsafe { core::slice::from_raw_parts_mut(dp.get(), vw * vh) };
+        for vy in c * per..((c + 1) * per).min(vh) {
+            let ry = (vy * rh / vh).min(rh - 1);
+            let s = &src[ry * rw..ry * rw + rw];
+            for (p, &x) in d[vy * vw..vy * vw + vw].iter_mut().zip(xs.iter()) {
+                *p = s[x as usize];
+            }
+        }
+    });
+}
+
+/// Mark every pixel of the layer `off` (vw×vh) that still holds the frame's (rw×rh, as seeded)
+/// UI_CLEAR; the rest keep their colour.
+fn ui_mark(off: &mut [u32], vw: usize, vh: usize, src: &[u32], rw: usize, rh: usize) {
+    let xs: Vec<u32> = (0..vw).map(|vx| ((vx * rw / vw).min(rw - 1)) as u32).collect();
+    let (chunks, per) = crate::par::row_chunks(vh, 32);
+    let dp = crate::par::Shared(off.as_mut_ptr());
+    let xs = &xs[..];
+    crate::par::for_each(chunks, &|c: usize| {
+        let d = unsafe { core::slice::from_raw_parts_mut(dp.get(), vw * vh) };
+        for vy in c * per..((c + 1) * per).min(vh) {
+            let ry = (vy * rh / vh).min(rh - 1);
+            let s = &src[ry * rw..ry * rw + rw];
+            for (p, &x) in d[vy * vw..vy * vw + vw].iter_mut().zip(xs.iter()) {
+                *p = if *p == s[x as usize] { UI_CLEAR } else { *p & 0xFF_FFFF };
+            }
+        }
+    });
+}
+
+fn ui_begin(sc: f64) {
+    if unsafe { (*(&raw const UI_LAYER)).is_some() } {
+        return;
+    }
+    // the 3-D drawn so far lands on the frame before drawing moves to the layer
+    crate::drivers::g3d::surface_switch(true);
+    let Some(w) = win() else { return };
+    let sc = if sc.is_finite() { sc.clamp(0.25, 8.0) } else { 1.0 };
+    let (rw, rh) = (w.w, w.h);
+    if rw == 0 || rh == 0 {
+        return;
+    }
+    let vw = (libm::round(rw as f64 / sc) as usize).max(1);
+    let vh = (libm::round(rh as f64 / sc) as usize).max(1);
+    let bigger = vw > rw || vh > rh;
+    if (vw == rw && vh == rh) || (bigger && w.screen.is_none()) {
+        // 1:1 (or bigger than an unscaled window, which has no screen pixels to spare): draw straight
+        // into the frame; a snapshot answers ui_pixel_drawn
+        let mut snap = ui_take(rw * rh);
+        snap.copy_from_slice(&w.buf[..rw * rh]);
+        unsafe { *(&raw mut UI_LAYER) = Some(UiLayer { real: snap, rw, rh, clip: w.clip, direct: true }) };
+        return;
+    }
+    let t0 = crate::arch::timer::now_us();
+    let mut off = ui_take(vw * vh);
+    ui_stretch(&mut off, vw, vh, &w.buf, rw, rh);
+    let real = core::mem::replace(&mut w.buf, off);
+    let clip = w.clip.take();
+    w.w = vw;
+    w.h = vh;
+    unsafe { *(&raw mut UI_LAYER) = Some(UiLayer { real, rw, rh, clip, direct: false }) };
+    crate::prof::add(crate::prof::SCALE, crate::arch::timer::now_us().saturating_sub(t0));
+}
+
+fn ui_end() {
+    let Some(l) = (unsafe { (*(&raw mut UI_LAYER)).take() }) else { return };
+    if l.direct {
+        ui_give(l.real);
+        return;
+    }
+    // 3-D drawn inside the layer lands on it (no second tone pass over the UI)
+    crate::drivers::g3d::surface_switch(false);
+    let Some(w) = win() else { return };
+    let t0 = crate::arch::timer::now_us();
+    let (vw, vh, rw, rh) = (w.w, w.h, l.rw, l.rh);
+    let mut off = core::mem::replace(&mut w.buf, l.real);
+    w.w = rw;
+    w.h = rh;
+    w.clip = l.clip;
+    if off.len() == vw * vh && w.buf.len() >= rw * rh {
+        ui_mark(&mut off, vw, vh, &w.buf, rw, rh);
+        if vw > rw || vh > rh {
+            unsafe { (*(&raw mut UI_OVERLAYS)).push((off, vw, vh)) };
+        } else {
+            // a layer smaller than the frame: its pixels, scaled up, onto the frame
+            let xs: Vec<u32> = (0..rw).map(|rx| ((rx * vw / rw).min(vw - 1)) as u32).collect();
+            let (chunks, per) = crate::par::row_chunks(rh, 32);
+            let fp = crate::par::Shared(w.buf.as_mut_ptr());
+            let (o, xs) = (&off[..], &xs[..]);
+            crate::par::for_each(chunks, &|c: usize| {
+                let f = unsafe { core::slice::from_raw_parts_mut(fp.get(), rw * rh) };
+                for ry in c * per..((c + 1) * per).min(rh) {
+                    let vy = (ry * vh / rh).min(vh - 1);
+                    let orow = &o[vy * vw..vy * vw + vw];
+                    for (d, &x) in f[ry * rw..ry * rw + rw].iter_mut().zip(xs.iter()) {
+                        let p = orow[x as usize];
+                        if p != UI_CLEAR {
+                            *d = p;
+                        }
+                    }
+                }
+            });
+            ui_give(off);
+        }
+    } else {
+        ui_give(off);
+    }
+    crate::prof::add(crate::prof::SCALE, crate::arch::timer::now_us().saturating_sub(t0));
+}
+
+/// `ui_pixel_drawn(x, y)`: did the open layer draw the pixel at virtual (x, y)?
+fn ui_pixel_drawn(x: f64, y: f64) -> bool {
+    let Some(l) = (unsafe { (*(&raw const UI_LAYER)).as_ref() }) else { return false };
+    let Some(w) = win() else { return false };
+    if !(x >= 0.0 && y >= 0.0) {
+        return false;
+    }
+    let (xi, yi) = (x as usize, y as usize);
+    if xi >= w.w || yi >= w.h {
+        return false;
+    }
+    let cur = w.buf[yi * w.w + xi];
+    let was = if l.direct {
+        l.real.get(yi * l.rw + xi).copied()
+    } else {
+        let rx = (xi * l.rw / w.w).min(l.rw - 1);
+        let ry = (yi * l.rh / w.h).min(l.rh - 1);
+        l.real.get(ry * l.rw + rx).copied()
+    };
+    was.is_some_and(|v| v != cur)
+}
 
 fn perf_overlay(w: &mut Window) {
     let now = crate::arch::timer::now_us();
@@ -2097,15 +2754,27 @@ fn perf_overlay(w: &mut Window) {
         return;
     }
     let dt = now.saturating_sub(last) as f64;
-    let ema = unsafe {
+    let (ema, max_us) = unsafe {
         PERF_FRAME_US = if PERF_FRAME_US == 0.0 { dt } else { PERF_FRAME_US * 0.8 + dt * 0.2 };
-        PERF_FRAME_US
+        if dt >= PERF_MAX_US || now.saturating_sub(PERF_MAX_AT) > 3_000_000 {
+            PERF_MAX_US = dt;
+            PERF_MAX_AT = now;
+        }
+        (PERF_FRAME_US, PERF_MAX_US)
     };
     let fps = if ema > 0.0 { 1_000_000.0 / ema } else { 0.0 };
+    let (gc, coro, sched, blit) = unsafe { (PERF_GC_US, PERF_CORO_US, PERF_SCHED_US, PERF_BLIT_US) };
+    let app = (ema - gc - coro - sched - blit).max(0.0);
     let line = alloc::format!(
-        " frame {:.1} ms ({:.0} fps)  builtins/frame {}  tris {}{}  gc {}  free {} MiB ",
+        " frame {:.1} ms ({:.0} fps) max {:.0} ms  app {:.1} gc {:.1} iso {:.1} tasks {:.1} blit {:.1}  builtins {} tris {}{} gc#{} free {} MiB ",
         ema / 1000.0,
         fps,
+        max_us / 1000.0,
+        app / 1000.0,
+        gc / 1000.0,
+        coro / 1000.0,
+        sched / 1000.0,
+        blit / 1000.0,
         calls_now.saturating_sub(calls_before),
         crate::drivers::g3d::take_stats(),
         crate::drivers::g3d::scale_note(),
@@ -2118,21 +2787,94 @@ fn perf_overlay(w: &mut Window) {
 }
 
 fn present() {
+    let t0 = if crate::prof::on() { crate::arch::timer::now_us() } else { 0 };
+    present_inner();
+    if t0 != 0 {
+        crate::prof::frame_end(t0, crate::arch::timer::now_us());
+    }
+}
+
+/// When the next frame may go out (frame pacing; 0 = restart the cadence).
+#[cfg(target_arch = "x86_64")]
+static mut PACE_NEXT_US: u64 = 0;
+
+/// Frame pacing: present at most `framebuffer::present_hz()` frames a second
+/// (Settings > Appearance > Refresh rate; 0 = unlimited). Rendering 200+ frames
+/// a second for a 60 Hz panel only burns power and heat; the wait goes to the
+/// background tasks and isolates instead. The cadence is a fixed grid, so the
+/// frames land evenly; a frame that ran over a whole slot restarts the grid
+/// from now instead of rushing out catch-up frames.
+#[cfg(target_arch = "x86_64")]
+fn pace_frame() {
+    let hz = crate::drivers::framebuffer::present_hz() as u64;
+    if hz == 0 {
+        unsafe { PACE_NEXT_US = 0 };
+        return;
+    }
+    let interval = 1_000_000 / hz;
+    let now = crate::arch::timer::now_us;
+    let t0 = now();
+    unsafe {
+        let mut next = PACE_NEXT_US;
+        if next == 0 || t0 > next + interval || next > t0 + interval {
+            next = t0;
+        }
+        let mut spins = 0u32;
+        while now() < next && spins < 1_000_000 {
+            crate::coro::yield_now();
+            crate::proc::sched::yield_now();
+            // the last stretch is spun finely; before it, let the core breathe
+            let left = next.saturating_sub(now());
+            if left > 200 {
+                crate::arch::timer::delay_us(left.min(500) - 100);
+            } else {
+                core::hint::spin_loop();
+            }
+            spins += 1;
+        }
+        PACE_NEXT_US = next + interval;
+    }
+    crate::prof::add(crate::prof::PACE, now().saturating_sub(t0));
+}
+
+fn present_inner() {
     // a headless service's frame loop: just give everyone else a turn
     if crate::coro::in_coro() {
         crate::coro::yield_now();
         return;
     }
+    // an app's first frame takes the screen from the boot screen
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    crate::drivers::bootscreen::end();
     crate::startup::boot_once();
+    crate::startup::tick(); // restart any daemon whose service crashed (throttled)
+    // a UI layer the program left open closes with the frame
+    ui_end();
     crate::lingrt::mark_present();
+    let t_gc = crate::arch::timer::now_us();
     crate::lingrt::gc_maybe();
+    let t_gc_end = crate::arch::timer::now_us();
+    crate::prof::add(crate::prof::GC, t_gc_end.saturating_sub(t_gc));
     crate::drivers::g3d::end_frame();
+    crate::prof::add_endframe(crate::arch::timer::now_us().saturating_sub(t_gc_end));
     crate::wifi::tick();
     // the program's isolates and workers (coro.rs) get a turn every frame
+    let t_coro = crate::arch::timer::now_us();
+    perf_ema(&raw mut PERF_GC_US, t_coro.saturating_sub(t_gc));
     crate::coro::yield_now();
     // the background tasks (SSH server, chat listener) get the CPU once a frame
-    #[cfg(target_arch = "aarch64")]
+    let t_sched = crate::arch::timer::now_us();
+    perf_ema(&raw mut PERF_CORO_US, t_sched.saturating_sub(t_coro));
+    // (x86 too: a full-screen app that never calls ling_kernel_yield, like FLY
+    // for FUN, otherwise starved the SSH server and the LLM task while it ran)
     crate::proc::sched::yield_now();
+    let t_tasks_end = crate::arch::timer::now_us();
+    perf_ema(&raw mut PERF_SCHED_US, t_tasks_end.saturating_sub(t_sched));
+    crate::prof::add(crate::prof::TASKS, t_tasks_end.saturating_sub(t_coro));
+    // hold the frame for its slot at the display refresh, then sample the
+    // pointer, so the cursor drawn below is as fresh as it can be
+    #[cfg(target_arch = "x86_64")]
+    pace_frame();
     let (mx, my, _) = mouse_state();
     unsafe {
         let last = MOUSE_LAST;
@@ -2144,57 +2886,140 @@ fn present() {
             perf_overlay(w);
         }
     }
+    // PrtSc was pressed: this frame goes out without the pointer, then the
+    // screenshot overlay takes it (drivers/screenshot.rs)
+    #[cfg(target_arch = "x86_64")]
+    let shot = crate::drivers::screenshot::pending();
+    #[cfg(not(target_arch = "x86_64"))]
+    let shot = false;
     if let Some(w) = win() {
+        // The screenshot notice goes in first and comes out last, so the
+        // overlays below save and restore pixels on top of it.
+        #[cfg(target_arch = "x86_64")]
+        let mut toast = crate::drivers::screenshot::toast_patch(w.w, w.h);
+        #[cfg(target_arch = "x86_64")]
+        if let Some(t) = toast.as_mut() {
+            crate::drivers::screenshot::swap_into(&mut w.buf, w.w, t);
+        }
         // Draw the pointer into the frame, blit, then put the pixels back so the
-        // app's own buffer is untouched.
+        // app's own buffer is untouched. A scaled window gets them after scaling,
+        // in screen pixels (sharp, the size they are everywhere else, and above
+        // the UI layers' pixels).
         let mut saved: Vec<(usize, u32)> = Vec::new();
-        // The input mode (Ctrl+Space) and what is being composed, bottom right, while not Latin.
-        let pe = crate::drivers::ime::preedit();
-        if crate::drivers::ime::active() || !pe.is_empty() {
-            let mut s = String::from(crate::drivers::ime::label());
-            if !pe.is_empty() {
-                s.push_str("  ");
-                s.push_str(&pe);
-            }
-            let bw = (s.len() as i64 * 8 + 16).min(w.w as i64);
-            let bh = 26i64;
-            let (bx, by) = (w.w as i64 - bw - 10, w.h as i64 - bh - 10);
-            for yy in by.max(0)..(by + bh).min(w.h as i64) {
-                for xx in bx.max(0)..(bx + bw).min(w.w as i64) {
-                    let i = yy as usize * w.w + xx as usize;
-                    saved.push((i, w.buf[i]));
-                    let edge = yy == by || yy == by + bh - 1 || xx == bx || xx == bx + bw - 1;
-                    w.buf[i] = if edge { 0x9A53D6 } else { 0x1B1B1B };
-                }
-            }
-            text8(w, bx + 8, by + 5, 0xF5F5F5, &s);
+        let pointer = mx >= 0.0 && my >= 0.0 && !shot && !cursor_hidden();
+        if w.screen.is_none() {
+            decorate(w, mx, my, pointer, &mut saved);
         }
-        if mx >= 0.0 && my >= 0.0 {
-            use crate::drivers::cursor;
-            let fill = cursor::fill_color(crate::arch::timer::now_ms());
-            let (cx, cy) = (mx as i64, my as i64);
-            for dy in 0..cursor::H as i64 {
-                for dx in 0..cursor::W as i64 {
-                    let k = cursor::classify(dx as i32, dy as i32);
-                    let (x, y) = (cx + dx, cy + dy);
-                    if k == 0 || x < 0 || y < 0 || x as usize >= w.w || y as usize >= w.h {
-                        continue;
+        let t_blit = crate::arch::timer::now_us();
+        match w.screen {
+            Some((sw, sh)) => {
+                // nearest-neighbour aspect-fit into a screen-sized frame
+                let out = unsafe { &mut *(&raw mut SCALE_BUF) };
+                if out.len() != sw * sh {
+                    *out = vec![0u32; sw * sh];
+                }
+                let (ox, oy, dw, dh) = fit_rect(w.w, w.h, sw, sh);
+                // the column map only changes with the sizes: keep it between frames
+                let xmap = unsafe { &mut *(&raw mut XMAP) };
+                if xmap.0 != (w.w, dw) {
+                    *xmap = ((w.w, dw), (0..dw).map(|x| (x * w.w / dw) as u32).collect());
+                }
+                let xm = &xmap.1;
+                // the UI layers closed this frame (ui_end), each with its own column map
+                // when it is not exactly the scaled frame's width
+                let ovs: &Vec<(Vec<u32>, usize, usize)> = unsafe { &*(&raw const UI_OVERLAYS) };
+                let ovmaps: Vec<Option<Vec<u32>>> =
+                    ovs.iter().map(|&(_, vw, _)| if vw == dw { None } else { Some((0..dw).map(|x| ((x * vw / dw).min(vw - 1)) as u32).collect()) }).collect();
+                let layered = !ovs.is_empty();
+                // rows are independent: split them over the cores (each chunk
+                // starts fresh, then copies a repeated source row from above)
+                let (chunks, per) = crate::par::row_chunks(dh, 32);
+                let outp = crate::par::Shared(out.as_mut_ptr());
+                let (src_buf, ww, wh) = (&w.buf[..], w.w, w.h);
+                crate::par::for_each(chunks, &|c: usize| {
+                    let out = unsafe { core::slice::from_raw_parts_mut(outp.get(), sw * sh) };
+                    let mut prev_sy = usize::MAX;
+                    for y in c * per..((c + 1) * per).min(dh) {
+                        let sy = y * wh / dh;
+                        let row = (oy + y) * sw + ox;
+                        if sy == prev_sy && !layered {
+                            // the same source row as the line above (any upscale): copy it
+                            let from = (oy + y - 1) * sw + ox;
+                            out.copy_within(from..from + dw, row);
+                        } else {
+                            let src = &src_buf[sy * ww..][..ww];
+                            let dst = &mut out[row..row + dw];
+                            for (d, &sx) in dst.iter_mut().zip(xm.iter()) {
+                                *d = src[sx as usize];
+                            }
+                        }
+                        prev_sy = sy;
+                        // then every UI layer's own pixels, in the order they were drawn
+                        let dst = &mut out[row..row + dw];
+                        for ((ov, vw, vh), map) in ovs.iter().zip(ovmaps.iter()) {
+                            let vy = (y * vh / dh).min(vh - 1);
+                            let orow = &ov[vy * vw..vy * vw + vw];
+                            match map {
+                                None => {
+                                    for (d, &p) in dst.iter_mut().zip(orow.iter()) {
+                                        if p != UI_CLEAR {
+                                            *d = p;
+                                        }
+                                    }
+                                },
+                                Some(m) => {
+                                    for (d, &vx) in dst.iter_mut().zip(m.iter()) {
+                                        let p = orow[vx as usize];
+                                        if p != UI_CLEAR {
+                                            *d = p;
+                                        }
+                                    }
+                                },
+                            }
+                        }
                     }
-                    let i = y as usize * w.w + x as usize;
-                    saved.push((i, w.buf[i]));
-                    w.buf[i] = if k == 1 { cursor::OUTLINE } else { fill };
-                }
-            }
+                });
+                // the bar, IME box and pointer in screen pixels, on the scaled frame
+                let mut sv = Window { buf: core::mem::take(out), w: sw, h: sh, open: true, clip: None, black: false, screen: None };
+                let mut scratch: Vec<(usize, u32)> = Vec::new();
+                decorate(&mut sv, mx, my, pointer, &mut scratch);
+                *out = sv.buf;
+                crate::prof::add(crate::prof::SCALE, crate::arch::timer::now_us().saturating_sub(t_blit));
+                let t_fb = crate::arch::timer::now_us();
+                framebuffer::blit_rgb(out, sw, sh);
+                crate::prof::add(crate::prof::BLIT, crate::arch::timer::now_us().saturating_sub(t_fb));
+            },
+            None => {
+                framebuffer::blit_rgb(&w.buf, w.w, w.h);
+                crate::prof::add(crate::prof::BLIT, crate::arch::timer::now_us().saturating_sub(t_blit));
+            },
         }
-        framebuffer::blit_rgb(&w.buf, w.w, w.h);
+        ui_overlays_done();
+        let t_blit_end = crate::arch::timer::now_us();
+        perf_ema(&raw mut PERF_BLIT_US, t_blit_end.saturating_sub(t_blit));
         for (i, v) in saved {
             w.buf[i] = v;
         }
+        #[cfg(target_arch = "x86_64")]
+        if let Some(t) = toast.as_mut() {
+            crate::drivers::screenshot::swap_into(&mut w.buf, w.w, t);
+        }
+        if crate::lingrt::app_depth() > 0 {
+            frame_sample(w);
+        }
+    }
+    #[cfg(target_arch = "x86_64")]
+    if shot && crate::drivers::screenshot::take_pending() {
+        crate::drivers::screenshot::run();
     }
     // Input for the next frame. Ctrl+Q closes a launched app (never the
     // desktop itself) back to whatever started it.
+    crate::prof::mark_pump_start();
     let nested = crate::lingrt::app_depth() > 0;
     let input = unsafe { &mut *(&raw mut INPUT) };
+    // judged on the frame the app just drew, before its keys are cleared
+    let esc_quit = nested && esc_quits(input);
+    let esc_quit = esc_quit || (nested && esc_check_due());
     input.pressed.clear();
     #[cfg(target_arch = "aarch64")]
     {
@@ -2222,6 +3047,11 @@ fn present() {
     {
         crate::drivers::mixer::pump();
         crate::arch::idt::poll_drain_8042();
+        // A USB keyboard's held keys (key_down) and a USB mouse's wheel; its
+        // key presses arrive below as scancode-decoded bytes like PS/2's.
+        input.prev_held = input.held;
+        input.held = crate::arch::xhci::held_report();
+        input.wheel = crate::arch::xhci::mouse_take_wheel();
         loop {
             match crate::drivers::keyboard::poll_char() {
                 0 => break,
@@ -2236,8 +3066,43 @@ fn present() {
                         input.pressed.push(name);
                     }
                 },
+                // keyboard.rs's navigation codes are not terminal bytes: fed to
+                // `feed`, Up (0x11) read as Ctrl+Q and quit the app, and Down /
+                // Left / Right / Home / End / PgUp / PgDn did nothing
+                crate::drivers::keyboard::UP_ARROW => input.pressed.push("up"),
+                crate::drivers::keyboard::DOWN_ARROW => input.pressed.push("down"),
+                crate::drivers::keyboard::LEFT_ARROW => input.pressed.push("left"),
+                crate::drivers::keyboard::RIGHT_ARROW => input.pressed.push("right"),
+                crate::drivers::keyboard::HOME_KEY => input.pressed.push("home"),
+                crate::drivers::keyboard::END_KEY => input.pressed.push("end"),
+                crate::drivers::keyboard::PGUP_KEY => input.pressed.push("pageup"),
+                crate::drivers::keyboard::PGDN_KEY => input.pressed.push("pagedown"),
+                // the overlay opens at the next present, over every app
+                crate::drivers::keyboard::PRTSC_KEY => crate::drivers::screenshot::request(),
                 c => input.feed(c),
             }
+        }
+    }
+    // Esc is the app's Back key; when the app did not even look at it (nothing
+    // to go back from), or it comes twice in a row, it quits the app -- or parks
+    // it, like Minimize, when the app asked for that (`esc_minimizes`).
+    if esc_quit {
+        if !input.quit && active_app().is_some_and(|a| a.esc_parks) {
+            app_suspend();
+            return;
+        }
+        input.quit = true;
+    }
+    // The title bar's buttons.
+    if nested {
+        match app_bar_click() {
+            BarAction::Close => input.quit = true,
+            BarAction::Minimize if active_app().is_some() => {
+                input.quit = false;
+                app_suspend();
+                return;
+            },
+            _ => {},
         }
     }
     if input.quit && nested {
@@ -2532,6 +3397,9 @@ fn report_has(r: &[u8; 8], u: u8) -> bool {
 fn key_down(name: &str) -> bool {
     let i = unsafe { &*(&raw const INPUT) };
     let n = name.to_ascii_lowercase();
+    if n == "escape" || n == "esc" {
+        unsafe { ESC_SEEN = true };
+    }
     key_usages(&n).iter().any(|&u| report_has(&i.held, u)) || i.pressed.iter().any(|p| *p == n)
 }
 
@@ -2539,6 +3407,9 @@ fn key_pressed(name: &str) -> bool {
     let i = unsafe { &mut *(&raw mut INPUT) };
     i.flush_esc();
     let n = name.to_ascii_lowercase();
+    if n == "escape" || n == "esc" {
+        unsafe { ESC_SEEN = true };
+    }
     i.pressed.iter().any(|p| *p == n)
         || key_usages(&n).iter().any(|&u| report_has(&i.held, u) && !report_has(&i.prev_held, u))
 }
@@ -2557,7 +3428,14 @@ fn mouse_state() -> (f64, f64, u8) {
     }
     #[cfg(target_arch = "x86_64")]
     {
-        crate::arch::idt::poll_drain_8042();
+        // draining the 8042 is port I/O (a VM exit each under KVM, ~10 us): a game asking for
+        // mouse_x / mouse_y thousands of times a frame drains it at most every 0.5 ms
+        static mut LAST_DRAIN_US: u64 = 0;
+        let now = crate::arch::timer::now_us();
+        if now.wrapping_sub(unsafe { LAST_DRAIN_US }) >= 500 {
+            unsafe { LAST_DRAIN_US = now };
+            crate::arch::idt::poll_drain_8042();
+        }
         let (ox, oy) = framebuffer::safe_margin();
         use crate::drivers::mouse;
         return ((mouse::x() - ox as i32) as f64, (mouse::y() - oy as i32) as f64, mouse::buttons());
@@ -2646,6 +3524,232 @@ fn dlg_entries(dir: &str, kind: Dlg, exts: &[String]) -> Vec<(String, bool)> {
         .filter(|(n, d, _)| *d || (kind != Dlg::Folder && ext_matches(n, exts)))
         .map(|(n, d, _)| (n, d))
         .collect()
+}
+
+// ── A launched app's title bar and Esc ───────────────────────────────────────
+// Apps own the whole screen, so the bar slides in over their top edge: shown for
+// a few seconds when an app starts, when the pointer touches the top of the
+// screen, and always while pinned (the maximize / restore button).
+
+const BAR_H: i64 = 28;
+const BAR_BTN_W: i64 = 44;
+static mut BAR_UNTIL_MS: u64 = 0;
+static mut BAR_PINNED: bool = false;
+static mut BAR_SHOWN: bool = false;
+static mut BAR_APP: String = String::new();
+static mut BAR_BTN_LAST: u8 = 0;
+/// The app asked about Esc since the last frame (`key_pressed("escape")`).
+static mut ESC_SEEN: bool = false;
+static mut ESC_LAST_MS: u64 = 0;
+
+#[derive(PartialEq)]
+enum BarAction {
+    None,
+    Minimize,
+    Close,
+}
+
+/// Is the bar on screen this frame?
+fn app_bar_visible(my: f64) -> bool {
+    let now = crate::arch::timer::now_ms();
+    let name = active_app_name();
+    unsafe {
+        let app = &mut *(&raw mut BAR_APP);
+        if *app != name {
+            *app = name;
+            BAR_UNTIL_MS = now + 3000;
+        }
+        let near = my >= 0.0 && my < if BAR_SHOWN { BAR_H as f64 } else { 4.0 };
+        BAR_SHOWN = BAR_PINNED || now < BAR_UNTIL_MS || near;
+        BAR_SHOWN
+    }
+}
+
+/// The three buttons' left edges: minimize, maximize, close.
+fn bar_buttons(w: usize) -> [i64; 3] {
+    let r = w as i64;
+    [r - 3 * BAR_BTN_W, r - 2 * BAR_BTN_W, r - BAR_BTN_W]
+}
+
+fn app_bar_draw(w: &mut Window, mx: f64, my: f64, saved: &mut Vec<(usize, u32)>) {
+    if !app_bar_visible(my) {
+        return;
+    }
+    let h = (BAR_H as usize).min(w.h);
+    for i in 0..h * w.w {
+        saved.push((i, w.buf[i]));
+        w.buf[i] = 0x16141C;
+    }
+    for x in 0..w.w {
+        let i = (h - 1) * w.w + x;
+        w.buf[i] = 0x6E3FF3;
+    }
+    // the bundle's short name, spelled the way the menu does
+    let mut title = active_app_name();
+    let known = [
+        ("lingdev", "LingDev"), ("lingstation", "LingStationX"), ("lingmodeler", "LingModeler"),
+        ("horizon", "Horizon"), ("messenger", "Messenger"), ("wallet", "Ling Wallet"),
+        ("lingforfun", "Ling For Fun"), ("linganime", "LingAnime"),
+    ];
+    if let Some((_, nice)) = known.iter().find(|(k, _)| title.eq_ignore_ascii_case(k)) {
+        title = String::from(*nice);
+    } else if let Some(c) = title.get_mut(0..1) {
+        c.make_ascii_uppercase();
+    }
+    text8(w, 12, (BAR_H - 8) / 2, 0xE8E6F0, &title);
+    let hint = "Esc: back / quit";
+    text8(w, 12 + title.len() as i64 * 8 + 24, (BAR_H - 8) / 2, 0x8A8798, hint);
+    let bx = bar_buttons(w.w);
+    let cy = BAR_H / 2;
+    for (k, &x0) in bx.iter().enumerate() {
+        let hover = my >= 0.0 && (my as i64) < BAR_H && mx as i64 >= x0 && (mx as i64) < x0 + BAR_BTN_W;
+        if hover {
+            let bg = if k == 2 { 0xC42B4B } else { 0x2E2A3A };
+            for y in 0..(BAR_H - 1) {
+                for x in x0.max(0)..(x0 + BAR_BTN_W).min(w.w as i64) {
+                    w.buf[y as usize * w.w + x as usize] = bg;
+                }
+            }
+        }
+        let c = 0xE8E6F0;
+        let mx0 = x0 + BAR_BTN_W / 2;
+        match k {
+            0 => {
+                for x in mx0 - 6..=mx0 + 6 {
+                    put(w, x, cy + 4, c);
+                }
+            },
+            1 => {
+                // pinned (restored) draws two stacked squares, like a desktop's restore button
+                let s = 6;
+                for d in -s..=s {
+                    put(w, mx0 + d, cy - s, c);
+                    put(w, mx0 + d, cy + s, c);
+                    put(w, mx0 - s, cy + d, c);
+                    put(w, mx0 + s, cy + d, c);
+                }
+                if unsafe { BAR_PINNED } {
+                    for d in -s + 3..=s + 3 {
+                        put(w, mx0 + d, cy - s - 3, c);
+                        put(w, mx0 + s + 3, cy + d - 3, c);
+                    }
+                }
+            },
+            _ => {
+                for d in -6..=6 {
+                    put(w, mx0 + d, cy + d, c);
+                    put(w, mx0 + d, cy - d, c);
+                    put(w, mx0 + d + 1, cy + d, c);
+                    put(w, mx0 + d + 1, cy - d, c);
+                }
+            },
+        }
+    }
+}
+
+/// A click on the bar this frame (a press of the left button over a button).
+fn app_bar_click() -> BarAction {
+    let (mx, my, b) = mouse_state();
+    let pressed = b & 1 != 0 && unsafe { BAR_BTN_LAST } & 1 == 0;
+    unsafe { BAR_BTN_LAST = b };
+    if !pressed || !unsafe { BAR_SHOWN } || my < 0.0 || my as i64 >= BAR_H {
+        return BarAction::None;
+    }
+    let Some(w) = win() else { return BarAction::None };
+    // drawn in screen pixels (over a scaled window too)
+    let bx = bar_buttons(w.screen.map_or(w.w, |s| s.0));
+    let x = mx as i64;
+    if x >= bx[0] && x < bx[0] + BAR_BTN_W {
+        BarAction::Minimize
+    } else if x >= bx[1] && x < bx[1] + BAR_BTN_W {
+        unsafe { BAR_PINNED = !BAR_PINNED };
+        BarAction::None
+    } else if x >= bx[2] && x < bx[2] + BAR_BTN_W {
+        BarAction::Close
+    } else {
+        BarAction::None
+    }
+}
+
+/// The pointer as the app sees it: over the bar, its buttons are the bar's.
+fn app_mouse_state() -> (f64, f64, u8) {
+    let (x, y, b) = mouse_state();
+    // the bar is drawn in screen pixels (a scaled window's too)
+    let sy = y;
+    let (x, y) = to_buffer_coords(x, y);
+    if crate::lingrt::app_depth() > 0 && unsafe { BAR_SHOWN } && sy >= 0.0 && (sy as i64) < BAR_H {
+        return (x, y, 0);
+    }
+    (x, y, b)
+}
+
+/// A coarse grid of the app's last two frames (every 16th pixel), so an Esc
+/// that changed nothing on screen can be told from one that went back.
+static mut SAMPLE_CUR: Vec<u32> = Vec::new();
+static mut SAMPLE_PREV: Vec<u32> = Vec::new();
+/// After an Esc the app looked at: the frame from before it, and how many
+/// more frames to wait before judging whether the app did anything with it.
+static mut ESC_BASE: Vec<u32> = Vec::new();
+static mut ESC_WAIT: u8 = 0;
+
+fn frame_sample(w: &Window) {
+    unsafe {
+        let prev = &mut *(&raw mut SAMPLE_PREV);
+        let cur = &mut *(&raw mut SAMPLE_CUR);
+        core::mem::swap(prev, cur);
+        cur.clear();
+        for y in (8..w.h).step_by(16) {
+            for x in (8..w.w).step_by(16) {
+                cur.push(w.buf[y * w.w + x]);
+            }
+        }
+    }
+}
+
+/// Esc came in during the frame just drawn: quit when the app never looked at
+/// it, or on a second Esc within 0.6 s. When the app did look, watch the next
+/// frames: an Esc that changed (next to) nothing had nothing to go back from,
+/// so it quits (`esc_check_due`).
+fn esc_quits(input: &mut Input) -> bool {
+    input.flush_esc();
+    let esc = input.pressed.iter().any(|p| *p == "escape") || (report_has(&input.held, 0x29) && !report_has(&input.prev_held, 0x29));
+    let seen = unsafe { core::mem::replace(&mut *(&raw mut ESC_SEEN), false) };
+    if !esc {
+        return false;
+    }
+    let now = crate::arch::timer::now_ms();
+    let double = now.saturating_sub(unsafe { ESC_LAST_MS }) < 600;
+    unsafe { ESC_LAST_MS = now };
+    if !seen || double {
+        return true;
+    }
+    unsafe {
+        // the frame before the one that saw the Esc
+        *(&mut *(&raw mut ESC_BASE)) = (*(&raw const SAMPLE_PREV)).clone();
+        ESC_WAIT = 2;
+    }
+    false
+}
+
+/// The Esc being watched has had its frames: quit if the screen stayed put.
+fn esc_check_due() -> bool {
+    unsafe {
+        if ESC_WAIT == 0 {
+            return false;
+        }
+        ESC_WAIT -= 1;
+        if ESC_WAIT > 0 {
+            return false;
+        }
+        let base = core::mem::take(&mut *(&raw mut ESC_BASE));
+        let cur = &*(&raw const SAMPLE_CUR);
+        if base.is_empty() || base.len() != cur.len() {
+            return false;
+        }
+        let diff = base.iter().zip(cur.iter()).filter(|(a, b)| a != b).count();
+        // a clock, a caret or a frame-time readout may tick; going back redraws a lot more
+        diff <= 6 + base.len() / 200
+    }
 }
 
 /// 8x8 text, unclipped (the dialog ignores the program's clip rectangle).
@@ -2919,8 +4023,44 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
                 (*(&raw mut INPUT)).buf_mode = false;
                 (*(&raw mut INPUT)).buf.clear();
             }
-            open_window(a(0, 800.0), a(1, 600.0));
+            open_window(a(0, 800.0), a(1, 600.0), a(3, 0.0));
             UNIT
+        },
+        // the host's borderless fullscreen (title, w, h, render height): here a
+        // scaled window at the screen's aspect, its frame no taller than the
+        // render height (default 720 -- the software rasterizer's fill cost
+        // grows with pixels), stretched to the whole screen by present()
+        b"fullscreen" | b"open_fullscreen" | b"open_fullscreen_scaled" => {
+            unsafe {
+                (*(&raw mut INPUT)).buf_mode = false;
+                (*(&raw mut INPUT)).buf.clear();
+            }
+            let (fw, fh) = (framebuffer::width().max(1) as f64, framebuffer::height().max(1) as f64);
+            let want = a(3, 0.0);
+            let rh = if want >= 120.0 { want.min(fh) } else { fh.min(720.0) };
+            open_window(libm::round(fw * rh / fh), rh, 2.0);
+            UNIT
+        },
+        // the render height of a scaled window: a new frame of that height at
+        // the same aspect (0 / out of range = the screen's own height, capped)
+        b"set_render_height" => {
+            // (a layer open over the old frame closes first)
+            ui_end();
+            if let Some(w) = win() {
+                if w.screen.is_some() {
+                    let (fw, fh) = (framebuffer::width().max(1) as f64, framebuffer::height().max(1) as f64);
+                    let want = a(0, 0.0);
+                    let rh = if want >= 120.0 && want < fh { want } else { fh.min(720.0) } as usize;
+                    let rw = libm::round(fw * rh as f64 / fh) as usize;
+                    if rh != w.h || rw != w.w {
+                        w.w = rw;
+                        w.h = rh;
+                        w.buf = vec![0u32; rw * rh];
+                        w.clip = None;
+                    }
+                }
+            }
+            num(win().map(|w| w.h).unwrap_or(0) as f64)
         },
         b"window_is_open" => boolean(win().is_some_and(|w| w.open)),
         b"close_window" | b"quit" => {
@@ -2931,11 +4071,54 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         b"present" | b"show" | b"gfx_present" => {
             present();
-            unsafe { FRAMES += 1 };
+            unsafe {
+                FRAMES += 1;
+                MOUSE_WAS_DOWN = FRAME_DOWN.take().unwrap_or_else(|| app_mouse_state().2 & 1 != 0);
+            }
             UNIT
+        },
+        // the host's immediate-mode button: a filled face in the given colour
+        // (r, g, b), lighter under the pointer; 1 on the frame it's pressed
+        b"ui_button" => {
+            let (x, y, bw, bh) = (a(0, 0.0), a(1, 0.0), a(2, 120.0), a(3, 40.0));
+            let (mx, my, b) = app_mouse_state();
+            let down = unsafe { *(*(&raw mut FRAME_DOWN)).get_or_insert(b & 1 != 0) };
+            let hover = mx >= x && mx < x + bw && my >= y && my < y + bh;
+            let clicked = hover && down && unsafe { !MOUSE_WAS_DOWN };
+            let (r, g, bl) = if args.len() >= 7 { (a(4, 76.0), a(5, 110.0), a(6, 200.0)) } else { (76.0, 110.0, 200.0) };
+            let k = if down && hover { 1.25 } else if hover { 1.12 } else { 1.0 };
+            let c = pack_rgb((r * k).min(255.0), (g * k).min(255.0), (bl * k).min(255.0));
+            if let Some(w) = win() {
+                fill_poly(w, &[(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh)], c);
+            }
+            num(if clicked { 1.0 } else { 0.0 })
         },
         b"get_width" => num(win().map(|w| w.w).unwrap_or(0) as f64),
         b"get_height" => num(win().map(|w| w.h).unwrap_or(0) as f64),
+        // the UI scale layer (see ui_begin above)
+        b"ui_begin" => {
+            ui_begin(a(0, 1.0));
+            UNIT
+        },
+        b"ui_end" => {
+            ui_end();
+            UNIT
+        },
+        b"ui_pixel_drawn" => num(if ui_pixel_drawn(a(0, -1.0), a(1, -1.0)) { 1.0 } else { 0.0 }),
+        b"ui_detach" => UNIT,
+        // (the host's native display_size answers the frame's size too)
+        b"display_size" => {
+            let (w, h) = win().map(|w| (w.w as f64, w.h as f64)).unwrap_or((0.0, 0.0));
+            list_from(vec![num(w), num(h)])
+        },
+        b"cursor_hide" => {
+            unsafe { *(&raw mut CURSOR_HIDE_APP) = active_app_name() };
+            UNIT
+        },
+        b"cursor_show" => {
+            unsafe { (*(&raw mut CURSOR_HIDE_APP)).clear() };
+            UNIT
+        },
         b"screenshot" => UNIT,
 
         // The host's immediate-mode gfx API (the gfx arms of
@@ -2948,6 +4131,10 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         b"set_color_hsl" => {
             unsafe { GFX_COLOR = hsl_rgb(a(0, 0.0), a(1, 70.0), a(2, 50.0)) };
+            UNIT
+        },
+        b"set_alpha" => {
+            unsafe { PEN_ALPHA = a(0, 1.0).clamp(0.0, 1.0) as f32 };
             UNIT
         },
         b"fill" | b"clear" | b"gfx_fill" => {
@@ -3025,7 +4212,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             }
             UNIT
         },
-        b"px_flat" | b"px_color" | b"ui_theme" => UNIT,
+        b"px_flat" | b"px_color" => UNIT,
         b"px_clip" => {
             if let Some(w) = win() {
                 let (x, y, ww, hh) = (a(0, 0.0), a(1, 0.0), a(2, 0.0), a(3, 0.0));
@@ -3112,17 +4299,46 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             let g = gfont(a(0, -1.0));
             num(font(g).map(|_| measure(g as usize, &s, a(1, 16.0) as f32) as f64).unwrap_or(0.0))
         },
+        // host gfx: `font_text(font, x, y, px, text)` draws in the current
+        // `set_color` colour (GFX_COLOR), the "set colour then draw" API some
+        // apps (LingSys) use instead of px_text's inline colour. Reuse px_text
+        // with the colour spliced into its colour arg.
+        // set_font_antialias(0): font_text / font_text_fill glyphs hard-edged like the host's
+        // (whole pixels, a pixel font stays exact) for the program that asked
+        b"set_font_antialias" => {
+            unsafe {
+                *(&raw mut FONT_CRISP_APP) = if a(0, 1.0) > 0.5 { String::new() } else { active_app_name() };
+            }
+            UNIT
+        },
+        b"font_text" | b"font_text_fill" => {
+            unsafe {
+                let c = &*(&raw const FONT_CRISP_APP);
+                TEXT_CRISP = !c.is_empty() && *c == active_app_name();
+            }
+            let color = unsafe { GFX_COLOR };
+            let mut v: Vec<u64> = Vec::with_capacity(6);
+            v.push(*args.first().unwrap_or(&0)); // font
+            v.push(*args.get(1).unwrap_or(&0)); // x
+            v.push(*args.get(2).unwrap_or(&0)); // y
+            v.push(*args.get(3).unwrap_or(&0)); // px
+            v.push(num(color as f64)); // colour (packed 0xRRGGBB)
+            v.push(*args.get(4).unwrap_or(&0)); // text
+            px_text(&map_font_args(&v, &[0]));
+            unsafe { TEXT_CRISP = false };
+            UNIT
+        },
         b"font_fallback" => num(font_fallback(gfont(a(0, -1.0)), gfont(a(1, -1.0)), a(2, 1.0))),
 
         // Input: PS/2 (x86) or USB HID (Pi) mouse + keyboard, serial on the Pi.
-        b"mouse_x" => num(mouse_state().0),
-        b"mouse_y" => num(mouse_state().1),
+        b"mouse_x" => num(app_mouse_state().0),
+        b"mouse_y" => num(app_mouse_state().1),
         // pointer movement since the previous frame (the host's relative-mouse look / paddle)
         b"mouse_dx" => num(unsafe { MOUSE_DELTA.0 }),
         b"mouse_dy" => num(unsafe { MOUSE_DELTA.1 }),
-        b"mouse_down" => boolean(mouse_state().2 & 1 != 0),
-        b"mouse_down_right" => boolean(mouse_state().2 & 2 != 0),
-        b"mouse_down_middle" => boolean(mouse_state().2 & 4 != 0),
+        b"mouse_down" => boolean(app_mouse_state().2 & 1 != 0),
+        b"mouse_down_right" => boolean(app_mouse_state().2 & 2 != 0),
+        b"mouse_down_middle" => boolean(app_mouse_state().2 & 4 != 0),
         b"mouse_scroll" => num(unsafe { (*(&raw const INPUT)).wheel } as f64),
         b"mouse_scroll_x" => num(0.0),
         b"key_down" => boolean(key_down(&path_arg(args, 0))),
@@ -3231,6 +4447,10 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             let i = args.first().map(|&v| to_f64(v)).unwrap_or(0.0).clamp(0.0, 7.0) as usize;
             num(pad().axes[i] as f64)
         },
+        // The host's form is pad_button(pad, "a"): a named button of pad `pad`.
+        b"pad_button" if args.get(1).is_some_and(|&v| crate::lingrt::is_str(v)) => {
+            boolean(crate::hostcompat::pad_button_named(&to_string(args[1])))
+        },
         b"pad_button" => {
             let i = args.first().map(|&v| to_f64(v)).unwrap_or(0.0).clamp(0.0, 31.0) as u32;
             boolean((pad().buttons >> i) & 1 == 1)
@@ -3267,6 +4487,25 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             input.buf.clear();
             UNIT
         },
+        // Flush all stale keyboard state: the driver's decoded-byte queue and
+        // held report, plus the app-runtime's typed text / pressed / held. The
+        // sign-in screen calls this when it opens so a key held (or a report
+        // lost) during logout can't repeat into the password box.
+        b"os_kbd_reset" => {
+            #[cfg(target_arch = "aarch64")]
+            crate::arch::xhci::reset_key_state();
+            #[cfg(target_arch = "x86_64")]
+            crate::drivers::keyboard::drain();
+            let input = unsafe { &mut *(&raw mut INPUT) };
+            input.text.clear();
+            input.buf.clear();
+            input.pressed.clear();
+            input.held = [0; 8];
+            input.prev_held = [0; 8];
+            input.esc = 0;
+            crate::drivers::ime::reset();
+            UNIT
+        },
 
         // LingOS: the desktop's view of the system.
         b"px_text8" => {
@@ -3282,10 +4521,20 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             os_file_icon(args);
             UNIT
         },
+        // live window thumbnails for the taskbar
+        b"os_thumb_capture" => {
+            os_thumb_capture(args);
+            UNIT
+        },
+        b"os_thumb_draw" => {
+            os_thumb_draw(args);
+            UNIT
+        },
+        b"os_thumb_has" => boolean(unsafe { (*(&raw const THUMBS)).contains_key(&args.first().map(|&v| to_string(v)).unwrap_or_default()) }),
         b"px_image" => boolean(px_image(args)),
         // Picture handles (the PC decodes files into images it draws by id): not on the kernel yet.
-        b"image_load" | b"image_w" | b"image_h" | b"image_fetch" | b"image_job" | b"image_svg" | b"image_resized" | b"image_tint" | b"re_compile" | b"image_width" | b"image_height" => num(-1.0),
-        b"image_draw" | b"image_replace" | b"image_free" | b"image_fetch_cancel" => UNIT,
+        b"image_fetch" | b"image_job" | b"image_svg" | b"image_resized" | b"image_tint" | b"file_fetch" | b"file_job" | b"proc_start" | b"proc_poll" | b"re_compile" => num(-1.0),
+        b"image_replace" | b"image_fetch_cancel" => UNIT,
         b"re_exec" | b"re_names" => list_from(alloc::vec::Vec::new()),
         b"re_error" => mk_str("regular expressions are not available on LingOS yet"),
         b"os_home_folders" => list_from(HOME_FOLDERS.iter().map(|f| mk_str(f)).collect()),
@@ -3338,6 +4587,8 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"os_platform" => mk_str(if cfg!(target_arch = "aarch64") { "LingOS rpi5" } else { "LingOS x86-64" }),
         b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
         b"os_app_resume" => boolean(app_resume(&path_arg(args, 0))),
+        // Task Manager: end a suspended app (frees its stack, isolates, scope).
+        b"os_app_kill" => boolean(app_kill(&path_arg(args, 0))),
         // start an app straight into the background (it parks after its first frame)
         b"os_app_start_bg" => {
             let n = path_arg(args, 0);
@@ -3357,6 +4608,12 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             let on = args.get(1).map(|&v| crate::lingrt::truthy(v)).unwrap_or(false);
             boolean(crate::startup::set(&path_arg(args, 0), on))
         },
+        // daemon = a service the supervisor restarts when it crashes / exits
+        b"os_service_daemon" => boolean(crate::startup::is_daemon(&path_arg(args, 0))),
+        b"os_service_set_daemon" => {
+            let on = args.get(1).map(|&v| crate::lingrt::truthy(v)).unwrap_or(false);
+            boolean(crate::startup::set_daemon(&path_arg(args, 0), on))
+        },
         // the idle lock: seconds since input, the timeout, "an app was parked for it"
         b"os_idle_secs" => num(crate::startup::idle_secs()),
         b"os_lock_after" => {
@@ -3372,6 +4629,12 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             match path_arg(args, 0).as_str() {
                 "pause_audio" => unsafe { PAUSE_AUDIO = v },
                 "perf" => unsafe { PERF = v },
+                // the calling app: an Esc it does not use parks it instead of closing it
+                "esc_minimizes" => {
+                    if let Some(a) = active_app() {
+                        a.esc_parks = v;
+                    }
+                },
                 _ => {},
             }
             UNIT
@@ -3383,6 +4646,31 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"os_users" => list_from(users_list().iter().map(|s| mk_str(s)).collect()),
         b"os_login" => boolean(user_login(&path_arg(args, 0), &path_arg(args, 1))),
         b"os_user_create" => boolean(user_create(&path_arg(args, 0), &path_arg(args, 1))),
+        // Two-factor sign-in (fs/twofa.rs). The sign-in screen: os_login fails with
+        // os_login_error() == os_2fa_needed_msg() when the password was right but a
+        // code is needed; then os_login_code(user, password, code).
+        b"os_login_code" => boolean(user_login_code(&path_arg(args, 0), &path_arg(args, 1), &path_arg(args, 2))),
+        b"os_2fa_needed_msg" => mk_str(crate::fs::users::TWOFA_NEEDED),
+        // Settings > Security, always for the signed-in user.
+        b"os_2fa_enabled" => boolean(crate::fs::twofa::enabled(&os_user())),
+        b"os_2fa_recovery_left" => num(crate::fs::twofa::recovery_left(&os_user()) as f64),
+        // [secret, otpauth URI] to show as text + QR, or [] (already on / no storage)
+        b"os_2fa_begin" => match crate::fs::twofa::begin(&os_user()) {
+            Some((secret, uri)) => list_from(alloc::vec![mk_str(&secret), mk_str(&uri)]),
+            None => list_from(Vec::new()),
+        },
+        // the one-time recovery codes once the app's code checks out, else []
+        b"os_2fa_confirm" => match crate::fs::twofa::confirm(&os_user(), &path_arg(args, 0)) {
+            Some(codes) => list_from(codes.iter().map(|c| mk_str(c)).collect()),
+            None => list_from(Vec::new()),
+        },
+        b"os_2fa_disable" => boolean(crate::fs::twofa::disable(&os_user(), &path_arg(args, 0))),
+        b"os_2fa_cancel" => {
+            crate::fs::twofa::cancel(&os_user());
+            UNIT
+        },
+        // codes depend on the time: is the clock from the network or a board clock?
+        b"os_clock_set" => boolean(crate::clock::is_set()),
         // Wi-Fi (crate::wifi): the desktop's network picker.
         b"wifi_available" => boolean(crate::wifi::available()),
         b"wifi_status" => mk_str(&crate::wifi::status()),
@@ -3460,6 +4748,29 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         b"msg_status" => mk_str(crate::drivers::messenger::status()),
         b"os_uptime" => num(crate::arch::timer::now_ms() as f64 / 1000.0),
+        // The shell's working directory ("" = root) -- the Terminal prompt.
+        b"os_cwd" => mk_str(crate::fs::lingfs::cwd()),
+        // Everything the Terminal's zsh-style prompt line shows, in one call:
+        // "user\thost\tcwd\tsoul\tdirty" -- soul is "" outside a .miao shrine,
+        // dirty is "1" while offerings sit on the altar (like a git dirty mark).
+        b"os_shell_prompt" => {
+            let user = crate::fs::lingfs::current_user();
+            let host = host_name();
+            let cwd = crate::fs::lingfs::cwd();
+            let mut soul = String::new();
+            let mut dirty = "";
+            // Through vfs (card then lingfs): home folders live on the mounted
+            // data volume when there is one, so a raw lingfs read would miss it.
+            let soul_path = if cwd.is_empty() { String::from(".miao/SOUL") } else { alloc::format!("{cwd}/.miao/SOUL") };
+            if let Some(bytes) = crate::vfs::read(&soul_path) {
+                soul = String::from(core::str::from_utf8(&bytes).unwrap_or("").split_whitespace().nth(1).unwrap_or("main"));
+                let altar = if cwd.is_empty() { String::from(".miao/altar") } else { alloc::format!("{cwd}/.miao/altar") };
+                if crate::vfs::read(&altar).is_some_and(|a| !a.is_empty()) {
+                    dirty = "1";
+                }
+            }
+            mk_str(&alloc::format!("{user}\t{host}\t{cwd}\t{soul}\t{dirty}"))
+        },
         // os_shell(cmd): run a console command and return what it printed (the
         // desktop's Terminal window). Commands that take the whole screen are
         // refused here; the desktop sends those to the text console instead.
@@ -3489,6 +4800,19 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             let (w, h) = framebuffer::mode_dims();
             mk_str(&alloc::format!("{w}x{h}"))
         },
+        // "" when files go to a disk; why they are in RAM this session otherwise
+        b"os_storage_ram" => mk_str(&if crate::fs::blockdev::is_ram() { crate::fs::blockdev::ram_reason() } else { String::new() }),
+        // the frame-rate cap (the display's refresh; 0 = unlimited)
+        b"os_display_hz" => num(crate::drivers::framebuffer::present_hz() as f64),
+        b"os_display_set_hz" => {
+            let hz = a(0, 60.0).clamp(0.0, 500.0) as u32;
+            crate::drivers::framebuffer::set_present_hz(hz);
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                PACE_NEXT_US = 0
+            };
+            UNIT
+        },
         b"os_display_set" => {
             let w = a(0, 0.0).max(0.0) as u32;
             let h = a(1, 0.0).max(0.0) as u32;
@@ -3502,12 +4826,90 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         b"os_keyring" => mk_str(&crate::keyring::status()),
+        // Horizon's vault (see vault.rs): every read and write takes the account password
+        b"os_vault_status" => mk_str(&crate::vault::status()),
+        b"os_vault_error" => mk_str(crate::vault::error()),
+        b"os_vault_open" => {
+            let pw = args.first().map(|&v| to_string(v)).unwrap_or_default();
+            // "ok:" + the vault text, or "err:" + why
+            match crate::vault::open(&pw) {
+                Some(text) => mk_str(&alloc::format!("ok:{text}")),
+                None => mk_str(&alloc::format!("err:{}", crate::vault::error())),
+            }
+        },
+        b"os_vault_save" => {
+            let pw = args.first().map(|&v| to_string(v)).unwrap_or_default();
+            let text = args.get(1).map(|&v| to_string(v)).unwrap_or_default();
+            boolean(crate::vault::save(&pw, &text))
+        },
+        b"os_totp" => {
+            let secret = args.first().map(|&v| to_string(v)).unwrap_or_default();
+            mk_str(&crate::vault::totp(&secret, crate::clock::unix_now()))
+        },
         b"os_ssh" => boolean(crate::drivers::sshd::enabled()),
+        // Horizon's cookie jar (cookies.rs): the page's site, clear, count, on/off
+        b"os_cookie_site" => {
+            let u = path_arg(args, 0);
+            let host = u.split_once("://").map(|(_, r)| r).unwrap_or(&u).split(['/', '?', '#', ':']).next().unwrap_or("");
+            crate::cookies::set_site(host);
+            UNIT
+        },
+        b"os_cookies_clear" => {
+            crate::cookies::clear();
+            UNIT
+        },
+        b"os_cookies_count" => num(crate::cookies::count() as f64),
+        b"os_cookies_enabled" => boolean(crate::cookies::enabled()),
+        b"os_cookies_set_enabled" => {
+            let on = args.first().map(|&v| crate::lingrt::truthy(v)).unwrap_or(true);
+            crate::cookies::set_enabled(on);
+            boolean(on)
+        },
+        // the shared credential store (creds.rs): the kernel knows which app is asking
+        b"os_cred_set" => boolean(crate::creds::set(&path_arg(args, 0), &path_arg(args, 1))),
+        b"os_cred_get" => mk_str(&crate::creds::get(&path_arg(args, 0)).unwrap_or_default()),
+        b"os_cred_list" => list_from(crate::creds::list().iter().map(|s| mk_str(s)).collect()),
+        b"os_cred_info" => mk_str(&crate::creds::info(&path_arg(args, 0))),
+        b"os_cred_allow" => {
+            let on = args.get(2).map(|&v| crate::lingrt::truthy(v)).unwrap_or(false);
+            boolean(crate::creds::allow(&path_arg(args, 0), &path_arg(args, 1), on))
+        },
+        b"os_cred_forget" => boolean(crate::creds::forget(&path_arg(args, 0))),
+        b"os_ssh_port" => num(crate::drivers::sshd::port() as f64),
+        // the opt-in frame profiler (prof.rs): os_prof(frames) measures the next N presented frames and
+        // prints one report (0 stops); os_prof_mark("name") names a section of the frame; the last
+        // report text comes back from os_prof_report()
+        b"os_prof" => {
+            crate::prof::start(a(0, 300.0).max(0.0).min(600.0) as u32);
+            UNIT
+        },
+        b"os_prof_mark" => {
+            crate::prof::mark(&path_arg(args, 0));
+            UNIT
+        },
+        b"os_prof_report" => mk_str(&crate::prof::last_report()),
+        // the desktop's remote-control queue (remote.rs): "open:<app>", "close:<app>", "lock:screen"
+        b"os_remote_poll" => mk_str(&crate::remote::poll().unwrap_or_default()),
+        // Settings > Sign-in "2FA over SSH": ask for the authenticator code at SSH / SFTP login
+        b"os_ssh_2fa" => boolean(crate::drivers::sshd::twofa_required()),
+        b"os_ssh_2fa_set" => {
+            let on = args.first().map(|&v| crate::lingrt::truthy(v)).unwrap_or(true);
+            crate::drivers::sshd::set_twofa_required(on);
+            boolean(crate::drivers::sshd::twofa_required())
+        },
+        b"os_ssh_port_set" => {
+            let p = args.first().map(|&v| to_f64(v)).unwrap_or(0.0);
+            if (1.0..=65535.0).contains(&p) {
+                crate::drivers::sshd::set_port(p as u16);
+            }
+            num(crate::drivers::sshd::port() as f64)
+        },
         b"os_ssh_set" => {
             let on = args.first().map(|&v| to_f64(v) != 0.0 && v != crate::lingrt::boolean(false)).unwrap_or(false);
-            crate::drivers::sshd::set_enabled(on);
-            #[cfg(target_arch = "aarch64")]
-            crate::setup::set_saved("ssh", if on { "1" } else { "0" });
+            // startup::set persists the at-boot flag on BOTH arches (x86:
+            // /services, Pi: setup.conf) and flips the live server -- the
+            // x86 Network-tab toggle used to change only the running state.
+            crate::startup::set("ssh", on);
             boolean(on)
         },
         b"os_login_error" => mk_str(crate::fs::users::last_verify_error()),
@@ -3522,6 +4924,24 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         b"clipboard_get" => mk_str(core::str::from_utf8(crate::drivers::clipboard::get()).unwrap_or("")),
+        // the picture clipboard (drivers/clipboard.rs): Files, LingDiffusion and LingAnime share one picture
+        b"clipboard_image_copy_file" => boolean(crate::drivers::clipboard::image_copy_file(&path_arg(args, 0), false)),
+        b"clipboard_image_cut_file" => boolean(crate::drivers::clipboard::image_copy_file(&path_arg(args, 0), true)),
+        b"clipboard_has_image" => boolean(crate::drivers::clipboard::image().is_some()),
+        b"clipboard_image_w" => num(crate::drivers::clipboard::image().map(|c| c.w as f64).unwrap_or(0.0)),
+        b"clipboard_image_h" => num(crate::drivers::clipboard::image().map(|c| c.h as f64).unwrap_or(0.0)),
+        b"clipboard_image_path" => mk_str(crate::drivers::clipboard::image().map(|c| c.src.as_str()).unwrap_or("")),
+        b"clipboard_image_is_cut" => boolean(crate::drivers::clipboard::image().is_some_and(|c| c.cut)),
+        b"clipboard_image_seq" => num(crate::drivers::clipboard::image_seq() as f64),
+        b"clipboard_image_paste_to" => mk_str(&crate::drivers::clipboard::image_paste_to(&path_arg(args, 0)).unwrap_or_default()),
+        b"clipboard_image_paste_into" => mk_str(&crate::drivers::clipboard::image_paste_into(&path_arg(args, 0)).unwrap_or_default()),
+        b"clipboard_image_take_cut" => mk_str(&crate::drivers::clipboard::image_take_cut()),
+        b"clipboard_image_clear" => {
+            crate::drivers::clipboard::image_clear();
+            UNIT
+        },
+        b"fs_unique_path" => mk_str(&crate::drivers::clipboard::unique_path(&path_arg(args, 0))),
+        b"is_image_file" =>boolean(crate::drivers::clipboard::is_image_name(&path_arg(args, 0))),
         // keyboard layouts: names, the active index, choose one
         b"os_kbd_layouts" => {
             let n = crate::drivers::kbdlayout::count();
@@ -3593,8 +5013,24 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
 
         _ => {
             let _ = str_of;
+            // art_* (LingAnime's paint / 2.5D engine)
+            if name.starts_with(b"art_") {
+                if let Some(v) = crate::drivers::artpaint::dispatch(name, args) {
+                    return Some(v);
+                }
+            }
+            // diffusion_* (LingDiffusion: a GPU server on the LAN, or Stable Diffusion on this CPU)
+            #[cfg(target_arch = "x86_64")]
+            if name.starts_with(b"diffusion_") {
+                if let Some(v) = crate::drivers::diffusion::dispatch(name, args) {
+                    return Some(v);
+                }
+            }
             // llm_* (the language model) and daw_ai_available
             if let Some(v) = crate::drivers::llm::dispatch(name, args) {
+                return Some(v);
+            }
+            if let Some(v) = crate::hostcompat::dispatch(name, args) {
                 return Some(v);
             }
             return crate::drivers::g3d::dispatch(name, args);

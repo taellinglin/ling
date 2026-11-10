@@ -57,8 +57,10 @@ pub fn compile(source: &str, dir: &str) -> Result<ir::MirProgram, String> {
 }
 
 /// The program `path` names: the file itself; a project folder's entry (its
-/// `Ling.toml` `entry = "..."`, else `main.ling` / `src/main.ling`, the layout
-/// lingfu packages install with); or `<path>.ling`.
+/// `Ling.toml` `entry_os = "..."` when present -- the LingOS edition a
+/// published package carries for exactly this runtime -- else `entry = "..."`,
+/// else `main.ling` / `src/main.ling`, the layout lingfu packages install
+/// with); or `<path>.ling`.
 pub fn locate(path: &str) -> Option<String> {
     let p = path.trim_start_matches("./").trim_end_matches('/');
     if p.is_empty() {
@@ -68,11 +70,15 @@ pub fn locate(path: &str) -> Option<String> {
         return Some(String::from(p));
     }
     if let Some(toml) = modules::read_source(&format!("{p}/Ling.toml")) {
-        for line in toml.lines() {
-            if let Some(v) = line.trim().strip_prefix("entry").and_then(|r| r.trim_start().strip_prefix('=')) {
-                let c = modules::join(p, v.trim().trim_matches('"'));
-                if modules::source_exists(&c) {
-                    return Some(c);
+        // Two passes: `entry_os` (the LingOS-shaped program) wins over the
+        // desktop `entry` when a manifest carries both.
+        for key in ["entry_os", "entry"] {
+            for line in toml.lines() {
+                if let Some(v) = line.trim().strip_prefix(key).and_then(|r| r.trim_start().strip_prefix('=')) {
+                    let c = modules::join(p, v.trim().trim_matches('"'));
+                    if modules::source_exists(&c) {
+                        return Some(c);
+                    }
                 }
             }
         }

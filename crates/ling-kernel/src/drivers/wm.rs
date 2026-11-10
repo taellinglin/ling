@@ -243,6 +243,11 @@ pub fn app_label(name: &str) -> &str {
         "horizon" => "Horizon",
         "messenger" => "Messenger",
         "wallet" => "Wallet",
+        "lingforfun" => "Ling For Fun",
+        "lingcoder" => "Coder",
+        "lingsys" => "Sys",
+        "arcade" => "Arcade",
+        "lingdiffusion" => "Diffusion",
         "ssh" => "SSH + SFTP server",
         n => n,
     }
@@ -555,6 +560,11 @@ const ACT_RUN_WALLET: u8 = 205;
 const ACT_RUN_LINGDEV: u8 = 206;
 const ACT_RUN_LINGMODELER: u8 = 207;
 const ACT_RUN_HORIZON: u8 = 208;
+const ACT_RUN_LINGFORFUN: u8 = 209;
+const ACT_RUN_LINGCODER: u8 = 210;
+const ACT_RUN_LINGSYS: u8 = 211;
+const ACT_RUN_ARCADE: u8 = 212;
+const ACT_RUN_LINGDIFFUSION: u8 = 220;
 
 /// The built-in app a menu action runs.
 fn bundled_app(kind: u8) -> Option<&'static str> {
@@ -564,6 +574,11 @@ fn bundled_app(kind: u8) -> Option<&'static str> {
         ACT_RUN_LINGDEV => Some("lingdev"),
         ACT_RUN_LINGMODELER => Some("lingmodeler"),
         ACT_RUN_HORIZON => Some("horizon"),
+        ACT_RUN_LINGFORFUN => Some("lingforfun"),
+        ACT_RUN_LINGCODER => Some("lingcoder"),
+        ACT_RUN_LINGSYS => Some("lingsys"),
+        ACT_RUN_ARCADE => Some("arcade"),
+        ACT_RUN_LINGDIFFUSION => Some("lingdiffusion"),
         _ => None,
     }
 }
@@ -621,14 +636,17 @@ const fn app(name: &'static str, kind: u8, icon: u8, tile: u32) -> MenuRow {
 // The Applications menu: a tree of categories (each with its icon; click or
 // Enter folds it) and apps with their icons, named the short way -- no "Ling"
 // prefix -- in the same groups as the Pi desktop's menu.
-const MENU: [MenuRow; 27] = [
+const MENU: [MenuRow; 34] = [
     hdr("Sound & Video", icons::NOTE),
     app("StationX", ACT_RUN_APP, icons::NOTE, 0xD9488F),
     app("Gallery", KIND_GALLERY, icons::PICTURE, 0x2F9BD0),
     app("Media Player", KIND_MEDIA, icons::PLAY, 0xE0702E),
+    hdr("Graphics", icons::PICTURE),
+    app("Diffusion", ACT_RUN_LINGDIFFUSION, icons::DIFFUSION, 0x7A4FD0),
     hdr("Development", icons::CODE),
     app("Dev", ACT_RUN_LINGDEV, icons::GAMEPAD, 0x7356E8),
     app("Modeler", ACT_RUN_LINGMODELER, icons::CUBE, 0x23A566),
+    app("Coder", ACT_RUN_LINGCODER, icons::CODE, 0x3F7FBF),
     hdr("Internet", icons::GLOBE),
     app("Horizon", ACT_RUN_HORIZON, icons::GLOBE, 0x2C7BD6),
     app("Horizon Lite", KIND_HORIZON, icons::GLOBE, 0x5A7898),
@@ -638,10 +656,14 @@ const MENU: [MenuRow; 27] = [
     app("Files", KIND_FILES, icons::FOLDER, 0xD99A1E),
     app("Terminal", KIND_TERM, icons::PROMPT, 0x30333B),
     app("Editor", KIND_EDIT, icons::PENCIL_PAGE, 0x5F6E7E),
+    hdr("Games", icons::GAMEPAD),
+    app("Ling For Fun", ACT_RUN_LINGFORFUN, icons::GAMEPAD, 0x3BA7E0),
+    app("Arcade", ACT_RUN_ARCADE, icons::GAMEPAD, 0xC2478B),
     hdr("Finance", icons::COIN),
     app("Wallet", ACT_RUN_WALLET, icons::COIN, 0xC9961A),
     hdr("System", icons::GEAR),
     app("Packages", KIND_PKG, icons::BOX, 0x8A6A58),
+    app("Sys", ACT_RUN_LINGSYS, icons::GEAR, 0x4C8C6A),
     app("Settings", KIND_SETTINGS, icons::GEAR, 0x67768A),
     app("About", KIND_ABOUT, icons::INFO, 0x4A82E8),
     hdr("Power", icons::POWER),
@@ -758,23 +780,6 @@ fn menu_open_kbd() {
 
 // -- Installed-package launchers -------------------------------------------
 
-/// Does `dir` contain a file named `fname`? Tells a runnable package (one with
-/// a `main.ling`) from a Rust/source-only one.
-fn dir_has_file(dir: &str, fname: &[u8]) -> bool {
-    let mut i = 0usize;
-    loop {
-        let mut nb = [0u8; 40];
-        let Some((n, _)) = lingfs::list_entry(dir, i, &mut nb) else { return false };
-        if &nb[..n] == fname {
-            return true;
-        }
-        i += 1;
-        if i > 256 {
-            return false;
-        }
-    }
-}
-
 /// Extract a TOML `category = "..."` value from `toml` into `out`, returning
 /// its length (0 if absent). Tolerates leading whitespace and a missing space
 /// around `=`; won't false-match `categories`/`keywords`.
@@ -832,53 +837,33 @@ fn read_pkg_category(dir: &str, out: &mut [u8]) -> usize {
         }
     }
     let Ok(ps) = core::str::from_utf8(&path[..p]) else { return 0 };
-    let mut buf = [0u8; lingfs::BLOCK_SIZE];
-    let Ok(Some(len)) = lingfs::read_file(ps, &mut buf) else { return 0 };
-    parse_toml_category(&buf[..len], out)
+    // through vfs: big packages live on the SD card / FAT disk, not lingfs
+    let Some(buf) = crate::vfs::read(ps) else { return 0 };
+    parse_toml_category(&buf[..buf.len().min(4096)], out)
 }
 
-/// Rebuild the installed-package launcher list from lingfs. Called when the
-/// start menu opens (cheap; packages are few).
+/// Rebuild the installed-package launcher list (lingfs, or the SD card / FAT
+/// disk lingfu installs big packages onto). Called when the start menu opens.
 fn load_installed_packages() {
     let mut count = 0usize;
-    let mut i = 0usize;
-    while count < MAX_MENU_PKGS {
-        let mut nb = [0u8; 40];
-        let Some((nlen, _)) = lingfs::list_entry("packages", i, &mut nb) else { break };
-        i += 1;
-        if nlen == 0 {
-            continue;
+    for name in crate::drivers::lingfu::installed_packages() {
+        if count >= MAX_MENU_PKGS {
+            break;
         }
-        let mut dir = [0u8; 48];
-        let mut d = 0usize;
-        for &b in b"pkg-" {
-            dir[d] = b;
-            d += 1;
-        }
-        for &b in &nb[..nlen] {
-            if d < dir.len() {
-                dir[d] = b;
-                d += 1;
-            }
-        }
-        let Ok(dirs) = core::str::from_utf8(&dir[..d]) else { continue };
-        let mut src = [0u8; 52];
-        src[..d].copy_from_slice(&dir[..d]);
-        src[d..d + 4].copy_from_slice(b"/src");
-        let runnable = dir_has_file(dirs, b"main.ling")
-            || core::str::from_utf8(&src[..d + 4]).map(|s| dir_has_file(s, b"main.ling")).unwrap_or(false);
-        if !runnable {
+        if name.is_empty() || !crate::drivers::lingfu::is_app(&name) {
             continue; // source-only (Rust) package -- not runnable here
         }
+        let dir = alloc::format!("pkg-{name}");
         let mut cat = [0u8; 20];
-        let mut clen = read_pkg_category(dirs, &mut cat);
+        let mut clen = read_pkg_category(&dir, &mut cat);
         if clen == 0 {
             let def = b"Applications";
             clen = def.len().min(cat.len());
             cat[..clen].copy_from_slice(&def[..clen]);
         }
+        let nb = name.as_bytes();
         unsafe {
-            let nn = nlen.min(40);
+            let nn = nb.len().min(40);
             PKG_NAME[count][..nn].copy_from_slice(&nb[..nn]);
             PKG_NAME_LEN[count] = nn;
             PKG_CAT[count][..clen].copy_from_slice(&cat[..clen]);
@@ -962,7 +947,13 @@ fn menu_rows() -> alloc::vec::Vec<MRow> {
         if m.kind == KIND_HORIZON && has_app("horizon") {
             continue;
         }
-        if m.header == "Development" && !has_app("lingdev") && !has_app("lingmodeler") {
+        if m.header == "Development" && !has_app("lingdev") && !has_app("lingmodeler") && !has_app("lingcoder") {
+            continue;
+        }
+        if m.header == "Games" && !has_app("lingforfun") && !has_app("arcade") {
+            continue;
+        }
+        if m.header == "Graphics" && !has_app("lingdiffusion") && !has_app("linganime") {
             continue;
         }
         if m.header == "Finance" && !has_app("wallet") {
@@ -1506,7 +1497,7 @@ fn kind_size(kind: u8) -> (u32, u32) {
         KIND_FILES => (470.0, 370.0),
         KIND_WEB => (620.0, 460.0),
         KIND_HORIZON => (620.0, 460.0),
-        KIND_MESSENGER => (560.0, 420.0),
+        KIND_MESSENGER => (720.0, 430.0),
         KIND_EDIT => (600.0, 440.0),
         KIND_GALLERY => (560.0, 440.0),
         KIND_TERM => (620.0, 420.0),
@@ -2057,7 +2048,31 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
         }
         let left = buttons & 1 != 0;
         let was = PREV_BUTTONS & 1 != 0;
+        let right_press = buttons & 2 != 0 && PREV_BUTTONS & 2 == 0;
         PREV_BUTTONS = buttons;
+
+        // Terminal text selection: the drag follows the cursor while held,
+        // ends on release; a right-click copies the selection or pastes.
+        if terminal::selecting() {
+            if left {
+                terminal::mouse_drag(mx as i64, my as i64);
+            } else {
+                terminal::mouse_up();
+            }
+        }
+        if right_press && !MENU_OPEN {
+            let z = &*&raw const Z;
+            for zi in (0..Z_LEN).rev() {
+                let idx = z[zi];
+                if hit_window(&windows()[idx], mx, my) {
+                    if windows()[idx].kind == KIND_TERM && !hit_titlebar(&windows()[idx], mx, my) {
+                        z_raise(idx);
+                        terminal::right_click();
+                    }
+                    break;
+                }
+            }
+        }
 
         HOVER_DOCK = dock_hit(mx, my);
         if MENU_OPEN {
@@ -2359,6 +2374,12 @@ pub fn slot_focused(slot: usize) -> bool {
 /// driver's DC1/DC2/etc. control bytes, same encoding the pickers use
 /// (0x11 up, 0x12 down, 0x13 left, 0x14 right per `drivers/keyboard.rs`).
 pub fn key(k: u8) {
+    // PrtSc: the screenshot overlay opens at the next present (one more frame
+    // drawn without the pointer, so the pointer is not in the picture)
+    if k == crate::drivers::keyboard::PRTSC_KEY {
+        crate::drivers::screenshot::request();
+        return;
+    }
     // The Super key is the global Applications-menu launcher (the keyboard
     // path the mouse-only dock/menu never had): toggles the menu open/closed.
     if k == crate::drivers::keyboard::SUPER_KEY {
@@ -2635,6 +2656,14 @@ fn settings_network_adjust(row: usize, dir: i32) {
     match row {
         0 => {
             // IP mode: DHCP <-> static (MAC-derived), applied immediately.
+            // A user-saved static config (lingfs `netstatic`, Settings or the
+            // console's `netset`) always wins: never overwrite it with the
+            // MAC-derived 10.0.2.x guess -- dhcp_configure itself re-applies
+            // the saved config when one is set.
+            if netstack::static_config().is_some() {
+                netstack::dhcp_configure();
+                return;
+            }
             let mode = unsafe {
                 NET_IP_MODE = (NET_IP_MODE + 1) % 2;
                 NET_IP_MODE
@@ -2652,8 +2681,9 @@ fn settings_network_adjust(row: usize, dir: i32) {
             apply_dns_preset();
         },
         _ => {
-            // SSH server at boot (on/off) -- persisted to /services.
-            crate::services::set_ssh(!crate::services::ssh_enabled());
+            // SSH server at boot (on/off) -- persisted to /services, and the
+            // running server follows the switch at once (startup::set).
+            crate::startup::set("ssh", !crate::startup::ssh_at_boot());
         },
     }
 }
@@ -3612,6 +3642,11 @@ fn content_click(idx: usize, mx: i64, my: i64) -> bool {
         horizon::click_page(mx - page_x0, my - page_y0, unsafe { HZ_VIEWPORT_W });
         return true;
     }
+    if w.kind == KIND_TERM {
+        // start a text selection (terminal::draw recorded its grid)
+        terminal::mouse_down(mx, my);
+        return true;
+    }
     if w.kind == KIND_DAW {
         // the same origin draw_content_inner gives daw::draw
         let cx = (wx.max(0) as u32) + 16;
@@ -3619,15 +3654,10 @@ fn content_click(idx: usize, mx: i64, my: i64) -> bool {
         return crate::drivers::daw::click(mx, my, cx, cy);
     }
     if w.kind == KIND_MESSENGER {
-        // Geometry must track messenger::draw's SIDEBAR_W / LIST_TOP / ROW_H.
+        // the same origin draw_content_inner gives messenger::draw; it hit-tests its own layout
         let cx = wx.max(0) + 16;
         let cy = wy.max(0) + TITLEBAR_H as i64 + 14;
-        if mx >= cx && mx < cx + 190 {
-            let rel_y = my - cy - 34;
-            if rel_y >= 0 {
-                messenger::click_row((rel_y / 40) as usize);
-            }
-        }
+        messenger::click(mx - cx, my - cy);
         return true;
     }
     false
@@ -3900,8 +3930,10 @@ fn draw_content_inner(slot: usize) {
                             font8x8::draw_str(vx, ry, name.as_bytes(), accent, panel);
                         },
                         _ => {
-                            let v: &[u8] = if crate::services::ssh_enabled() { b"on" } else { b"off" };
-                            font8x8::draw_str(vx, ry, v, accent, panel);
+                            // the boot switch: lit when on, dim when off
+                            let on = crate::startup::ssh_at_boot();
+                            let v: &[u8] = if on { b"on" } else { b"off" };
+                            font8x8::draw_str(vx, ry, v, if on { accent } else { dim }, panel);
                         },
                     }
                 }
@@ -3922,6 +3954,15 @@ fn draw_content_inner(slot: usize) {
                 sy += 18;
                 font8x8::draw_str(x + 10, sy, b"DNS", dim, panel);
                 draw_ip(x + 120, sy, dns1, text, panel);
+                // Is the SSH server actually up right now? (the row above is
+                // the boot switch; this is the live state, so the two can differ)
+                sy += 18;
+                font8x8::draw_str(x + 10, sy, b"SSH", dim, panel);
+                if crate::startup::running("ssh") {
+                    font8x8::draw_str(x + 120, sy, b"running  port 22", accent, panel);
+                } else {
+                    font8x8::draw_str(x + 120, sy, b"stopped", dim, panel);
+                }
             } else if tab == SETTINGS_TAB_AUDIO {
                 // -- Audio tab: rows + read-only device info + output meter. --
                 let aud_labels = [locale::tr("Master volume"), locale::tr("Channels"), locale::tr("Test speakers")];

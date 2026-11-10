@@ -1918,21 +1918,11 @@ fn arg_string(args: &[u64], i: usize, d: &str) -> String {
 }
 
 /// Wall-clock seconds since the Unix epoch with sub-second resolution: the
-/// RTC's second at first use, carried forward by the microsecond timer.
+/// `crate::clock` read live (so network time set later takes effect), plus
+/// the uptime counter's fraction of a second.
 fn epoch_secs() -> f64 {
-    static mut BASE: Option<(u64, u64)> = None;
-    let now_us = crate::arch::timer::now_us();
-    let (wall, at_us) = unsafe {
-        match BASE {
-            Some(b) => b,
-            None => {
-                let b = (crate::lingapp::wall_time(), now_us);
-                BASE = Some(b);
-                b
-            },
-        }
-    };
-    wall as f64 + now_us.saturating_sub(at_us) as f64 / 1_000_000.0
+    let frac = (crate::arch::timer::now_us() % 1_000_000) as f64 / 1_000_000.0;
+    crate::clock::unix_now() as f64 + frac
 }
 
 /// The host's `format(fmt, args..)`: `{}` takes the next argument's display,

@@ -15,6 +15,7 @@
 use crate::arch::rtc;
 use crate::drivers::{clipboard, font8x8, framebuffer, lingfu, llm, media, mixer, netstack, theme};
 use crate::fs::{lingfs, users};
+use alloc::vec::Vec;
 
 const COLS: usize = 128; // max stored chars per line
 const LINES: usize = 240; // scrollback ring
@@ -46,6 +47,36 @@ static mut ZOOM: u32 = 1;
 static mut SCROLL: usize = 0; // rows scrolled up from the bottom
 static mut STARTED: bool = false;
 
+// ── Terminal theme: the LingStationX look, customizable ─────────────────────
+// This window's own text / background / accent colors and font size,
+// independent of the global theme: `term <preset>`, `term text|back|accent
+// <color>`, `term font <1|2|3>` -- persisted to lingfs `/termtheme` so the
+// choice survives a reboot. The "dusk" preset (the default) follows the
+// global theme slots, exactly as before.
+const TERM_PRESETS: [(&str, u32, u32, u32); 8] = [
+    ("dusk", 0, 0, 0), // follows the global theme (text / panel / accent)
+    ("ink", 0xC8D0E0, 0x0B0B10, 0x3BAAEB),
+    ("paper", 0x20242C, 0xF2EFE6, 0x1F6FD6),
+    ("rose", 0xF7D9DD, 0x160A0E, 0xED4A37),
+    ("ember", 0xFFD9C0, 0x160D06, 0xF7941E),
+    ("gold", 0xF7ECC0, 0x141006, 0xD1B600),
+    ("moss", 0xCDEBD3, 0x06120A, 0x45C870),
+    ("iris", 0xE2D9F7, 0x0E0A16, 0x9A53D6),
+];
+/// ROYGBIV, the design system's key palette (theme.ling's C_RED..C_VIOLET).
+const ROYGBIV: [u32; 7] = [0xED4A37, 0xF7941E, 0xF7D846, 0x45C870, 0x3BAAEB, 0x4A64D8, 0x9A53D6];
+/// Resolved (text, back, accent) when customized; None = follow the global theme.
+static mut THEME_CUSTOM: Option<(u32, u32, u32)> = None;
+static mut THEME_LOADED: bool = false;
+
+// The prompt line's cached pieces (reading lingfs every frame would be
+// wasteful): refreshed when the terminal starts and after every command.
+static mut HOSTNAME: [u8; 32] = [0; 32];
+static mut HOSTNAME_LEN: usize = 0;
+static mut MIAO_SOUL: [u8; 24] = [0; 24];
+static mut MIAO_SOUL_LEN: usize = 0;
+static mut MIAO_DIRTY: bool = false; // offerings sit on the altar
+
 // Command history (up/down recall), like a real shell.
 const HIST_N: usize = 32;
 static mut HIST: [[u8; INPUT_MAX]; HIST_N] = [[0; INPUT_MAX]; HIST_N];
@@ -72,6 +103,121 @@ fn rows() -> &'static mut [Row; LINES] {
     unsafe { &mut *&raw mut ROWS }
 }
 
+/// Integer blend: `a` toward `b` by num/den per channel.
+fn mix(a: u32, b: u32, num: u32, den: u32) -> u32 {
+    let ch = |sa: u32, sb: u32| {
+        let (ca, cb) = ((a >> sa) & 0xFF, (b >> sa) & 0xFF);
+        let _ = sb;
+        (ca * (den - num) + cb * num) / den
+    };
+    (ch(16, 16) << 16) | (ch(8, 8) << 8) | ch(0, 0)
+}
+
+/// Is this background light? (for ok/err contrast on e.g. the paper preset)
+fn is_light(back: u32) -> bool {
+    let (r, g, b) = ((back >> 16) & 0xFF, (back >> 8) & 0xFF, back & 0xFF);
+    2 * r + 3 * g + b > 3 * 255
+}
+
+/// The terminal's resolved (text, back, accent).
+fn theme_colors() -> (u32, u32, u32) {
+    match unsafe { THEME_CUSTOM } {
+        Some(t) => t,
+        None => (theme::color(theme::SLOT_TEXT), theme::color(theme::SLOT_PANEL), theme::color(theme::SLOT_ACCENT)),
+    }
+}
+
+/// "RRGGBB" / "#RRGGBB" / a ROYGBIV name / "white" / "black".
+fn parse_color(s: &str) -> Option<u32> {
+    let names = ["red", "orange", "yellow", "green", "blue", "indigo", "violet"];
+    if let Some(i) = names.iter().position(|n| *n == s) {
+        return Some(ROYGBIV[i]);
+    }
+    match s {
+        "white" => return Some(0xF5F5F5),
+        "black" => return Some(0x0B0B10),
+        "grey" | "gray" => return Some(0x8C9098),
+        _ => {},
+    }
+    let h = s.trim_start_matches('#');
+    if h.len() != 6 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(h, 16).ok()
+}
+
+/// Persist the theme + font to lingfs `/termtheme` (absolute: see services.rs
+/// for why a bare name would scatter under the CWD).
+fn save_theme() {
+    let mut text = alloc::string::String::new();
+    if let Some((t, b, a)) = unsafe { THEME_CUSTOM } {
+        text.push_str(&alloc::format!("text {t:06X}\nback {b:06X}\naccent {a:06X}\n"));
+    }
+    text.push_str(&alloc::format!("font {}\n", unsafe { ZOOM }));
+    let _ = lingfs::write_file_any("/termtheme", text.as_bytes());
+}
+
+fn load_theme() {
+    unsafe {
+        if THEME_LOADED {
+            return;
+        }
+        THEME_LOADED = true;
+    }
+    let mut buf = [0u8; 256];
+    let Ok(Some(n)) = lingfs::read_file_all("/termtheme", &mut buf) else { return };
+    let (mut t, mut b, mut a) = (None, None, None);
+    for line in core::str::from_utf8(&buf[..n]).unwrap_or("").lines() {
+        let mut f = line.split_whitespace();
+        match (f.next(), f.next()) {
+            (Some("text"), Some(v)) => t = parse_color(v),
+            (Some("back"), Some(v)) => b = parse_color(v),
+            (Some("accent"), Some(v)) => a = parse_color(v),
+            (Some("font"), Some(v)) => unsafe { ZOOM = v.parse::<u32>().unwrap_or(1).clamp(1, 3) },
+            _ => {},
+        }
+    }
+    if let (Some(t), Some(b), Some(a)) = (t, b, a) {
+        unsafe { THEME_CUSTOM = Some((t, b, a)) };
+    }
+}
+
+/// Refresh the prompt's cached pieces: hostname, and -- when the CWD holds a
+/// .miao shrine -- the living soul and whether offerings sit on the altar
+/// (the way zsh's git prompt shows the branch and a dirty mark).
+fn update_prompt_info() {
+    let mut buf = [0u8; 256];
+    unsafe {
+        HOSTNAME_LEN = 0;
+        if let Ok(Some(n)) = lingfs::read_file_all("/hostname", &mut buf) {
+            let s = core::str::from_utf8(&buf[..n]).unwrap_or("").trim();
+            let k = s.len().min(HOSTNAME.len());
+            HOSTNAME[..k].copy_from_slice(&s.as_bytes()[..k]);
+            HOSTNAME_LEN = k;
+        }
+        MIAO_SOUL_LEN = 0;
+        MIAO_DIRTY = false;
+    }
+    // Read the shrine through vfs (card then lingfs): with a mounted data
+    // volume, home folders live there, so a raw lingfs read would miss it.
+    let cwd = cwd_str();
+    let soul_path = if cwd.is_empty() { alloc::string::String::from(".miao/SOUL") } else { alloc::format!("{cwd}/.miao/SOUL") };
+    if let Some(bytes) = crate::vfs::read(&soul_path) {
+        // "soul: main" -- the word after the first space
+        let s = core::str::from_utf8(&bytes).unwrap_or("");
+        let soul = s.split_whitespace().nth(1).unwrap_or("main").trim();
+        unsafe {
+            let k = soul.len().min(MIAO_SOUL.len());
+            MIAO_SOUL[..k].copy_from_slice(&soul.as_bytes()[..k]);
+            MIAO_SOUL_LEN = k;
+        }
+        let altar = if cwd.is_empty() { alloc::string::String::from(".miao/altar") } else { alloc::format!("{cwd}/.miao/altar") };
+        if crate::vfs::read(&altar).is_some_and(|a| !a.is_empty()) {
+            unsafe { MIAO_DIRTY = true };
+        }
+    }
+}
+
 fn push(cls: Cls, s: &[u8]) {
     unsafe {
         let r = &mut rows()[HEAD];
@@ -83,7 +229,317 @@ fn push(cls: Cls, s: &[u8]) {
         if COUNT < LINES {
             COUNT += 1;
         }
+        TOTAL += 1;
         SCROLL = 0; // jump to bottom on new output
+    }
+}
+
+// ── Mouse text selection (drag over the output; Ctrl+C / right-click copy) ──
+// Positions are (absolute row number, column): absolute = counted since the
+// terminal started, so new output scrolling the ring does not move a
+// selection; a row that fell out of the scrollback just drops out of it.
+static mut TOTAL: u64 = 0; // rows ever pushed
+static mut SEL_A: Option<(u64, usize)> = None; // anchor (where the drag began)
+static mut SEL_B: Option<(u64, usize)> = None; // the other end
+static mut SEL_DRAG: bool = false;
+/// The last draw's grid: (x, y, glyph w, row h, cols, out rows, first abs row shown).
+static mut GRID: (i64, i64, i64, i64, usize, usize, u64) = (0, 0, 8, 10, 1, 1, 0);
+
+/// The ring slot of absolute row `abs`, if still in the scrollback.
+fn abs_row(abs: u64) -> Option<&'static Row> {
+    unsafe {
+        let oldest = TOTAL - COUNT as u64;
+        if abs < oldest || abs >= TOTAL {
+            return None;
+        }
+        let back = (TOTAL - abs) as usize; // 1 = newest
+        Some(&rows()[(HEAD + LINES - back) % LINES])
+    }
+}
+
+/// Mouse position -> (absolute row, column) on the output grid, clamped.
+fn cell_at(mx: i64, my: i64) -> Option<(u64, usize)> {
+    let (gx, gy, gw, gh, cols, out_rows, first) = unsafe { GRID };
+    if unsafe { COUNT } == 0 {
+        return None;
+    }
+    let r = ((my - gy).max(0) / gh.max(1)).min(out_rows as i64 - 1).max(0) as u64;
+    let c = ((mx - gx).max(0) / gw.max(1)).min(cols as i64) as usize;
+    let abs = (first + r).min(unsafe { TOTAL } - 1);
+    Some((abs, c))
+}
+
+/// The selection in order: ((row, col) start, (row, col) end exclusive col).
+fn sel_range() -> Option<((u64, usize), (u64, usize))> {
+    let (a, b) = unsafe { (SEL_A?, SEL_B?) };
+    if a == b {
+        return None;
+    }
+    Some(if a <= b { (a, b) } else { (b, a) })
+}
+
+/// Columns [from, to) of absolute row `abs` that the selection covers.
+fn sel_cols(abs: u64, len: usize) -> Option<(usize, usize)> {
+    let ((r0, c0), (r1, c1)) = sel_range()?;
+    if abs < r0 || abs > r1 {
+        return None;
+    }
+    let from = if abs == r0 { c0 } else { 0 };
+    let to = if abs == r1 { c1 } else { usize::MAX };
+    // whole-row spans past the text still mark the row (an empty line copies as "")
+    let to = to.min(len.max(from));
+    Some((from.min(len), to))
+}
+
+/// The selected text, rows joined with '\n' (trailing spaces trimmed).
+fn sel_text() -> Option<Vec<u8>> {
+    let ((r0, _), (r1, _)) = sel_range()?;
+    let mut out = Vec::new();
+    for abs in r0..=r1 {
+        let Some(row) = abs_row(abs) else { continue };
+        if let Some((f, t)) = sel_cols(abs, row.len) {
+            let mut s = &row.text[f..t.max(f)];
+            while let [rest @ .., b' '] = s {
+                s = rest;
+            }
+            out.extend_from_slice(s);
+        }
+        if abs != r1 {
+            out.push(b'\n');
+        }
+    }
+    Some(out)
+}
+
+fn sel_clear() {
+    unsafe {
+        SEL_A = None;
+        SEL_B = None;
+        SEL_DRAG = false;
+    }
+}
+
+/// Copy the selection to the clipboard (and clear it); false when none.
+fn copy_selection() -> bool {
+    match sel_text() {
+        Some(t) => {
+            clipboard::set(&t);
+            sel_clear();
+            true
+        },
+        None => false,
+    }
+}
+
+/// Paste the clipboard into the command line (one line: newlines become spaces).
+fn paste() {
+    let clip = clipboard::get();
+    unsafe {
+        if PW_MODE != 0 {
+            return;
+        }
+        for &b in clip {
+            let b = if b == b'\n' || b == b'\r' || b == b'\t' { b' ' } else { b };
+            if b >= 0x20 && INPUT_LEN < INPUT_MAX {
+                INPUT[INPUT_LEN] = b;
+                INPUT_LEN += 1;
+            }
+        }
+    }
+}
+
+// ── Tab completion: commands, their sub-commands, files and folders ─────────
+const COMMANDS: &[&str] = &[
+    "2fa", "ask", "bench3d", "cat", "cd", "clear", "copy", "cores", "cp", "cpu", "cryptotest", "curl", "date",
+    "dns", "echo", "gpu", "help", "https", "imgview", "install-disk", "ling", "lingfu", "llm", "ls", "miao", "mkdir", "mv", "nic",
+    "nvme", "paste", "prof", "pwd", "rename-user", "report", "rm", "services", "ssh", "ssh-serve", "su", "sudo", "term", "theme",
+    "update-boot", "whoami", "wifi-intel",
+];
+const SUBCOMMANDS: &[(&str, &[&str])] = &[
+    ("lingfu", &["install", "search", "list", "update", "upgrade", "remove", "sync", "info"]),
+    ("term", &["dusk", "ink", "paper", "rose", "ember", "gold", "moss", "iris", "text", "back", "accent", "font"]),
+    ("ssh-serve", &["on", "off"]),
+    ("llm", &["status", "load", "stop"]),
+    ("wifi-intel", &["up", "regs"]),
+    ("ling", &["run", "eval", "demo"]),
+    ("2fa", &["on", "off", "status"]),
+    ("imgview", &["demo", "demosvg"]),
+];
+
+/// Entries of a terminal-relative directory: (name, is_dir). `dir` is the
+/// typed folder part ("" = the working directory; a leading '/' = lingfs root).
+fn complete_entries(dir: &str) -> Vec<(alloc::string::String, bool)> {
+    let path = if let Some(abs) = dir.strip_prefix('/') {
+        crate::vfs::norm(abs)
+    } else if dir == "media/" || dir.starts_with("media/") {
+        // like `ls`: media/... is always the mounted volumes, whatever the cwd
+        crate::vfs::norm(dir)
+    } else {
+        crate::vfs::norm(&alloc::format!("{}/{dir}", cwd_str()))
+    };
+    let mut out = Vec::new();
+    if crate::fs::media::is_media_path(&path) {
+        for (name, is_dir, _) in crate::vfs::list(&path) {
+            out.push((name, is_dir));
+        }
+        return out;
+    }
+    if path.is_empty() && !crate::fs::media::names().is_empty() {
+        out.push((alloc::string::String::from("media"), true));
+    }
+    let mut nm = [0u8; 64];
+    for idx in 0..512 {
+        match lingfs::list_entry(&path, idx, &mut nm) {
+            Some((len, is_dir)) => {
+                out.push((alloc::string::String::from(core::str::from_utf8(&nm[..len]).unwrap_or("")), is_dir));
+            },
+            None => break,
+        }
+    }
+    out
+}
+
+fn common_prefix<'a>(items: &[&'a str]) -> &'a str {
+    let Some(first) = items.first() else { return "" };
+    let mut n = first.len();
+    for s in &items[1..] {
+        n = n.min(first.bytes().zip(s.bytes()).take_while(|(a, b)| a == b).count());
+    }
+    &first[..n]
+}
+
+/// Tab: complete the word before the cursor. One match completes it (a
+/// space after commands / files, a '/' after folders); several complete as far
+/// as they agree and, when that adds nothing, are listed above the prompt.
+fn tab_complete() {
+    let line = unsafe { alloc::string::String::from_utf8_lossy(&(&*&raw const INPUT)[..INPUT_LEN]).into_owned() };
+    let word_start = line.rfind(' ').map(|i| i + 1).unwrap_or(0);
+    let word = &line[word_start..];
+    let before: Vec<&str> = line[..word_start].split_whitespace().collect();
+    // (candidate full words, is_dir flags); `base` = the part of `word` kept in front
+    let mut cands: Vec<(alloc::string::String, bool)> = Vec::new();
+    let mut base = "";
+    if before.is_empty() {
+        for c in COMMANDS {
+            if c.starts_with(word) {
+                cands.push((alloc::string::String::from(*c), false));
+            }
+        }
+    } else {
+        if before.len() == 1 {
+            if let Some((_, subs)) = SUBCOMMANDS.iter().find(|(c, _)| *c == before[0]) {
+                for s in subs.iter() {
+                    if s.starts_with(word) {
+                        cands.push((alloc::string::String::from(*s), false));
+                    }
+                }
+            }
+        }
+        let (dir, prefix) = match word.rfind('/') {
+            Some(i) => (&word[..i + 1], &word[i + 1..]),
+            None => ("", word),
+        };
+        base = dir;
+        let dirs_only = before[0] == "cd";
+        for (name, is_dir) in complete_entries(dir) {
+            if name.starts_with(prefix) && (!dirs_only || is_dir) && (prefix.starts_with('.') || !name.starts_with('.')) {
+                cands.push((name, is_dir));
+            }
+        }
+    }
+    cands.sort();
+    cands.dedup();
+    if cands.is_empty() {
+        return;
+    }
+    let typed = &word[base.len().min(word.len())..];
+    let (insert, suffix) = if cands.len() == 1 {
+        let (c, d) = &cands[0];
+        (c.clone(), if *d { "/" } else { " " })
+    } else {
+        let names: Vec<&str> = cands.iter().map(|(c, _)| c.as_str()).collect();
+        let p = common_prefix(&names);
+        if p.len() <= typed.len() {
+            // nothing more to add: show the choices (like a shell's second Tab)
+            let mut row = alloc::string::String::new();
+            for (c, d) in &cands {
+                let item = alloc::format!("{c}{}  ", if *d { "/" } else { "" });
+                if row.len() + item.len() > COLS - 1 {
+                    push(Cls::Dim, row.trim_end().as_bytes());
+                    row.clear();
+                }
+                row.push_str(&item);
+            }
+            if !row.is_empty() {
+                push(Cls::Dim, row.trim_end().as_bytes());
+            }
+            return;
+        }
+        (alloc::string::String::from(p), "")
+    };
+    let mut new_line = alloc::string::String::from(&line[..word_start]);
+    new_line.push_str(base);
+    new_line.push_str(&insert);
+    new_line.push_str(suffix);
+    unsafe {
+        let n = new_line.len().min(INPUT_MAX);
+        (&mut *&raw mut INPUT)[..n].copy_from_slice(&new_line.as_bytes()[..n]);
+        INPUT_LEN = n;
+        HIST_NAV = 0;
+    }
+}
+
+/// Left button pressed inside the terminal: start a selection.
+pub fn mouse_down(mx: i64, my: i64) {
+    let c = cell_at(mx, my);
+    unsafe {
+        SEL_A = c;
+        SEL_B = c;
+        SEL_DRAG = c.is_some();
+    }
+}
+
+/// Left button held: extend the selection (the WM calls this every frame).
+pub fn mouse_drag(mx: i64, my: i64) {
+    unsafe {
+        if !SEL_DRAG {
+            return;
+        }
+        // dragging past the top / bottom edge scrolls the scrollback
+        let (_, gy, _, gh, _, out_rows, _) = GRID;
+        if my < gy && SCROLL + 1 < COUNT {
+            SCROLL += 1;
+        } else if my > gy + gh * out_rows as i64 && SCROLL > 0 {
+            SCROLL -= 1;
+        }
+        SEL_B = cell_at(mx, my);
+    }
+}
+
+/// Left button released.
+pub fn mouse_up() {
+    unsafe { SEL_DRAG = false };
+}
+
+pub fn selecting() -> bool {
+    unsafe { SEL_DRAG }
+}
+
+/// Right-click: copy the selection if there is one, else paste (Windows Terminal style).
+pub fn right_click() {
+    if !copy_selection() {
+        paste();
+    }
+}
+
+/// Mouse wheel over the terminal: scroll the scrollback (positive = up).
+pub fn wheel(lines: i32) {
+    unsafe {
+        if lines > 0 {
+            SCROLL = (SCROLL + lines as usize).min(COUNT.saturating_sub(1));
+        } else {
+            SCROLL = SCROLL.saturating_sub((-lines) as usize);
+        }
     }
 }
 
@@ -105,8 +561,10 @@ fn push_wrapped(cls: Cls, bytes: &[u8]) {
 }
 
 fn banner() {
+    load_theme();
+    update_prompt_info();
     push(Cls::Accent, b"LingOS terminal -- type 'help'");
-    push(Cls::Dim, b"a graphics-mode shell (separate from the text-mode lsh)");
+    push(Cls::Dim, b"a graphics-mode shell (separate from the text-mode lsh); 'term' themes it");
 }
 
 fn prompt_echo() {
@@ -244,6 +702,44 @@ fn split_cmd(s: &str) -> (&str, &str) {
     }
 }
 
+/// The disk installer's lines, wrapped to the window's width.
+#[cfg(target_arch = "x86_64")]
+fn push_install(lines: alloc::vec::Vec<(u8, alloc::string::String)>) {
+    use crate::drivers::installer as ins;
+    let w = unsafe { GRID.4 }.clamp(20, COLS - 1);
+    for (k, s) in lines {
+        let cls = match k {
+            ins::DIM => Cls::Dim,
+            ins::ERR => Cls::Err,
+            ins::OK => Cls::Ok,
+            ins::ACCENT => Cls::Accent,
+            _ => Cls::Normal,
+        };
+        if s.is_empty() {
+            push(cls, b"");
+            continue;
+        }
+        let b = s.as_bytes();
+        let mut at = 0;
+        while at < b.len() {
+            let mut end = (at + w).min(b.len());
+            // break at a space when the line is cut, and never inside a UTF-8 character
+            if end < b.len() {
+                if let Some(sp) = b[at..end].iter().rposition(|&c| c == b' ') {
+                    if sp > w / 2 {
+                        end = at + sp + 1;
+                    }
+                }
+                while end > at + 1 && (b[end] & 0xC0) == 0x80 {
+                    end -= 1;
+                }
+            }
+            push(cls, &b[at..end]);
+            at = end;
+        }
+    }
+}
+
 /// show whatever the model task has produced since the last look
 fn pump_llm(cols: usize) {
     if !llm::has_output() {
@@ -294,20 +790,26 @@ fn run(line: &str) {
             push(Cls::Normal, b"commands:");
             push(Cls::Normal, b"  help  clear  echo <t>  ls [dir]  cat <file>");
             push(Cls::Normal, b"  date  theme dark|light  copy <t>  paste");
-            push(Cls::Normal, b"  dns <host>   curl <url>   bring <url>");
+            push(Cls::Normal, b"  nic   dns <host>   curl <url>   bring <url>");
             push(Cls::Normal, b"  play <file.wav>   stop");
             push(Cls::Normal, b"  lingfu sync [--all]|upgrade|search <q>|install <name>|--all");
             push(Cls::Normal, b"  ling run <file.ling>|eval <src>   run demo|donut|<app.elf>");
             push(Cls::Normal, b"  cd <dir>   sudo <cmd>   su [user]   ling-life");
-            push(Cls::Normal, b"  ssh [user@]host   services [enable|disable ssh]   cryptotest");
+            push(Cls::Normal, b"  ssh [user@]host   ssh-serve on|off   services [enable|disable ssh]");
+            push(Cls::Normal, b"  term [preset|text|back|accent|font ...]   the terminal's own look");
+            push(Cls::Normal, b"  miao <rite...>   the temple of versions (lingfu install ling-miao)");
+            push(Cls::Normal, b"  cryptotest");
             push(Cls::Normal, b"  https <url>   imgview demo|demosvg|<url>");
             push(Cls::Normal, b"  ask <question>   llm [status|load [path]|stop]   (Qwen3, on this machine)");
+            push(Cls::Normal, b"  install-disk [n]   install LingOS from the USB stick onto a disk");
             push(Cls::Dim, b"  up/down: command history");
         },
         "clear" => unsafe {
             COUNT = 0;
             HEAD = 0;
             SCROLL = 0;
+            SEL_A = None;
+            SEL_B = None;
         },
         "echo" => push(Cls::Normal, arg.as_bytes()),
         "ask" => {
@@ -456,6 +958,12 @@ fn run(line: &str) {
                 }
             }
         },
+        "nic" => {
+            // which NIC (e1000 / igc), MAC, link speed, IP
+            let up = crate::drivers::netdev::ensure_init();
+            let line = crate::drivers::netdev::status_line();
+            push_wrapped(if up { Cls::Ok } else { Cls::Err }, line.replace("  ", "\n").as_bytes());
+        },
         "dns" => {
             if arg.is_empty() {
                 push(Cls::Err, b"usage: dns <host>");
@@ -496,19 +1004,44 @@ fn run(line: &str) {
         "ling" => run_ling(arg),
         "run" => run_native(arg),
         "ssh" => run_ssh(arg),
+        "ssh-serve" => run_ssh_serve(arg),
+        "term" => run_term(arg),
+        "miao" => run_miao(arg),
         "services" => run_services(arg),
+        "2fa" => run_2fa(arg),
         "https" => run_https(arg),
         "imgview" => run_imgview(arg),
         "cd" => {
-            if arg.is_empty() || arg == "/" || arg == "~" || arg == ".." {
+            // Nested paths, `~` (home) and `..` all work now, not just a
+            // single root-level dir -- so you can cd into your project folder
+            // and run `miao` there (the prompt's shrine segment follows cwd).
+            let target: alloc::string::String = if arg.is_empty() || arg == "~" {
+                crate::vfs::home()
+            } else if arg == "/" {
+                alloc::string::String::new()
+            } else if let Some(rest) = arg.strip_prefix('/') {
+                crate::vfs::norm(rest)
+            } else if arg == ".." || arg.starts_with("../") || arg.contains("..") {
+                crate::vfs::norm(&alloc::format!("{}/{arg}", cwd_str()))
+            } else {
+                let cwd = cwd_str();
+                if cwd.is_empty() {
+                    crate::vfs::norm(arg)
+                } else {
+                    crate::vfs::norm(&alloc::format!("{cwd}/{arg}"))
+                }
+            };
+            if target.is_empty() {
                 unsafe { CWD_LEN = 0 };
-            } else if dir_exists(arg) {
-                let b = arg.as_bytes();
+            } else if target.len() <= 64 && (crate::vfs::is_dir(&target) || dir_exists(&target)) {
+                let b = target.as_bytes();
                 let n = b.len().min(64);
                 unsafe {
                     CWD[..n].copy_from_slice(&b[..n]);
                     CWD_LEN = n;
                 }
+            } else if target.len() > 64 {
+                push(Cls::Err, b"cd: path too long for this shell");
             } else {
                 push(Cls::Err, b"cd: no such directory");
             }
@@ -546,6 +1079,23 @@ fn run(line: &str) {
                 m[p.len()..p.len() + un].copy_from_slice(&u.as_bytes()[..un]);
                 m[p.len() + un] = b':';
                 push(Cls::Dim, &m[..p.len() + un + 1]);
+            }
+        },
+        "rename-user" => {
+            let new = arg.trim();
+            if new.is_empty() || new.contains(' ') {
+                push(Cls::Err, b"usage: rename-user <new name>   (renames the signed-in account; asks for its password)");
+            } else {
+                let b = new.as_bytes();
+                let n = b.len().min(INPUT_MAX);
+                unsafe {
+                    PENDING[..n].copy_from_slice(&b[..n]);
+                    PENDING_LEN = n;
+                    PW_MODE = 3;
+                    PW_LEN = 0;
+                }
+                let line = alloc::format!("password for {} (to rename it to {new}):", lingfs::current_user());
+                push(Cls::Dim, line.as_bytes());
             }
         },
         "su" => {
@@ -627,6 +1177,24 @@ fn run(line: &str) {
             push(Cls::Ok, s.as_bytes());
             // v and s drop here, exercising free().
         },
+        // install LingOS onto a disk (drivers::installer): list, then ERASE
+        // RELEASE GATE (main session, 2026-11-09): until the installer passes its
+        // QEMU tests it only runs inside a VM; real hardware gets a notice
+        // instead (the user's PC has Windows + Debian disks). Remove the gate
+        // once it is verified.
+        #[cfg(target_arch = "x86_64")]
+        "install-disk" => push_install(crate::drivers::installer::command(arg)),
+        #[cfg(target_arch = "x86_64")]
+        "update-boot" => push_install(crate::drivers::installer::update_boot()),
+        // the hardware / diagnostic commands the console and SSH share
+        "cpu" | "gpu" | "nvme" | "wifi-intel" | "cores" | "prof" | "bench3d" | "report" => {
+            let mut cwd = alloc::string::String::new();
+            let out = crate::drivers::sshcmds::run(cmd, arg, "live", &mut cwd).unwrap_or_default();
+            for l in out.lines() {
+                let cls = if l.contains("FAIL") || l.contains("failed") { Cls::Err } else { Cls::Normal };
+                push(cls, l.as_bytes());
+            }
+        },
         _ => {
             let mut b = [0u8; 96];
             let p = b"unknown command: ";
@@ -636,6 +1204,110 @@ fn run(line: &str) {
             push(Cls::Err, &b[..p.len() + n]);
         },
     }
+    // the prompt line's hostname / miao-shrine pieces may have changed
+    update_prompt_info();
+}
+
+/// `term` -- this terminal's look: presets, per-part colors, font size.
+fn run_term(arg: &str) {
+    let (sub, rest) = split_cmd(arg);
+    let show = || {
+        let (t, b, a) = theme_colors();
+        push(Cls::Accent, b"term -- this terminal's look (persisted)");
+        push(Cls::Normal, alloc::format!("  text {t:06X}   back {b:06X}   accent {a:06X}   font {}", unsafe { ZOOM }).as_bytes());
+        push(Cls::Normal, b"  term <preset>              dusk ink paper rose ember gold moss iris");
+        push(Cls::Normal, b"  term text|back|accent <c>  RRGGBB or red..violet, white, black, grey");
+        push(Cls::Normal, b"  term font <1|2|3>          the pixel font, 1x..3x");
+        push(Cls::Dim, b"  dusk follows the global theme (theme dark|light)");
+    };
+    match sub {
+        "" | "help" | "show" | "list" => show(),
+        "font" => {
+            let z = rest.parse::<u32>().unwrap_or(0);
+            if (1..=3).contains(&z) {
+                unsafe { ZOOM = z };
+                save_theme();
+                push(Cls::Ok, b"font size set");
+            } else {
+                push(Cls::Err, b"usage: term font <1|2|3>  (Ctrl +/- zooms too)");
+            }
+        },
+        "text" | "back" | "accent" => {
+            let Some(c) = parse_color(rest) else {
+                push(Cls::Err, b"term: that color is neither RRGGBB nor a name (red..violet)");
+                return;
+            };
+            let (mut t, mut b, mut a) = theme_colors();
+            match sub {
+                "text" => t = c,
+                "back" => b = c,
+                _ => a = c,
+            }
+            unsafe { THEME_CUSTOM = Some((t, b, a)) };
+            save_theme();
+            push(Cls::Ok, b"color set");
+        },
+        name => match TERM_PRESETS.iter().find(|(n, _, _, _)| *n == name) {
+            Some((n, t, b, a)) => {
+                unsafe { THEME_CUSTOM = if *n == "dusk" { None } else { Some((*t, *b, *a)) } };
+                save_theme();
+                push(Cls::Ok, b"preset applied");
+            },
+            None => {
+                push(Cls::Err, b"term: no such preset");
+                show();
+            },
+        },
+    }
+}
+
+/// `ssh-serve on|off|status` -- the SSH + SFTP server, persisted so the
+/// choice holds at every boot (same switch as Settings > Startup).
+fn run_ssh_serve(arg: &str) {
+    match arg.trim() {
+        "on" | "start" | "enable" => {
+            crate::startup::set("ssh", true);
+            let ip = netstack::self_ip();
+            push(Cls::Ok, b"ssh-serve: ON -- SSH + SFTP server, port 22 (persisted: starts at boot)");
+            push(Cls::Normal, alloc::format!("  reach it at {}.{}.{}.{} (static IP or DHCP, whichever the system uses)", ip[0], ip[1], ip[2], ip[3]).as_bytes());
+        },
+        "off" | "stop" | "disable" => {
+            crate::startup::set("ssh", false);
+            push(Cls::Ok, b"ssh-serve: OFF -- the listener is closed and it stays off at boot");
+        },
+        "" | "status" => {
+            if crate::drivers::sshd::enabled() {
+                let ip = netstack::self_ip();
+                push(Cls::Ok, alloc::format!("ssh-serve: running on {}.{}.{}.{}:22 (SSH + SFTP)", ip[0], ip[1], ip[2], ip[3]).as_bytes());
+            } else {
+                push(Cls::Dim, b"ssh-serve: off");
+            }
+            if crate::startup::ssh_at_boot() {
+                push(Cls::Normal, b"  starts at boot (ssh-serve off to stop)");
+            } else {
+                push(Cls::Normal, b"  not started at boot (ssh-serve on to start)");
+            }
+        },
+        _ => push(Cls::Err, b"usage: ssh-serve [on|off|status]"),
+    }
+}
+
+/// `miao <args>` -- the temple of versions: routes to the installed
+/// `ling-miao` lingfu package (its LingOS edition). `--cwd /<dir>` hands it
+/// the shell's working directory (lingfs-root absolute, see vfs::resolve) so
+/// the rites run where the user stands, not inside the package folder.
+fn run_miao(arg: &str) {
+    if crate::lingc::locate("pkg-ling-miao").is_none() {
+        push(Cls::Err, b"miao: the temple is not installed on this machine");
+        push(Cls::Normal, b"  lingfu install ling-miao   (then: miao kai | wen | gong | ji | pu ...)");
+        return;
+    }
+    let mut cmd = alloc::format!("run pkg-ling-miao --cwd /{}", cwd_str());
+    if !arg.trim().is_empty() {
+        cmd.push(' ');
+        cmd.push_str(arg.trim());
+    }
+    run_ling(&cmd);
 }
 
 /// The desktop-terminal front end for the kernel `lingfu` package client.
@@ -968,6 +1640,69 @@ fn run_https(arg: &str) {
     }
 }
 
+/// `2fa [status | setup | confirm <code> | off <code> | cancel]` for the
+/// signed-in account: two-factor sign-in with an authenticator app
+/// (crate::fs::twofa). `setup` prints the key to type into the app.
+fn run_2fa(arg: &str) {
+    use crate::fs::twofa;
+    let user = lingfs::current_user();
+    let (cmd, rest) = match arg.trim().split_once(' ') {
+        Some((c, r)) => (c, r.trim()),
+        None => (arg.trim(), ""),
+    };
+    match cmd {
+        "" | "status" => {
+            if twofa::enabled(user) {
+                push(Cls::Ok, alloc::format!("2fa: on for {user} ({} recovery codes left)", twofa::recovery_left(user)).as_bytes());
+            } else {
+                push(Cls::Normal, alloc::format!("2fa: off for {user} -- '2fa setup' turns it on").as_bytes());
+            }
+        },
+        "setup" => match twofa::begin(user) {
+            Some((secret, uri)) => {
+                push(Cls::Normal, b"In your authenticator app choose 'enter a setup key' and type:");
+                let mut spaced = alloc::string::String::new();
+                for (i, ch) in secret.chars().enumerate() {
+                    if i > 0 && i % 4 == 0 {
+                        spaced.push(' ');
+                    }
+                    spaced.push(ch);
+                }
+                push(Cls::Ok, alloc::format!("  account: LingOS {user}   key: {spaced}   (time-based, 6 digits)").as_bytes());
+                push(Cls::Dim, alloc::format!("  ({uri})").as_bytes());
+                push(Cls::Normal, b"Then: 2fa confirm <the 6-digit code the app shows>");
+                if !crate::clock::is_set() {
+                    push(Cls::Err, b"The clock is not set from the network: connect first, codes are time-based.");
+                }
+            },
+            None => push(Cls::Err, b"2fa: already on (2fa off <code> first), or storage is not writable"),
+        },
+        "confirm" => match twofa::confirm(user, rest) {
+            Some(codes) => {
+                push(Cls::Ok, b"2fa: on. Signing in now asks for a code after the password.");
+                push(Cls::Normal, b"Recovery codes (each works once -- write them down, they are not shown again):");
+                for c in codes {
+                    push(Cls::Ok, alloc::format!("  {c}").as_bytes());
+                }
+                push(Cls::Dim, b"SSH / su: type the password with the 6-digit code right after it.");
+            },
+            None => push(Cls::Err, b"2fa: that code did not match (or no setup pending) -- check the clock"),
+        },
+        "off" => {
+            if twofa::disable(user, rest) {
+                push(Cls::Ok, b"2fa: off");
+            } else {
+                push(Cls::Err, b"2fa: that code did not match");
+            }
+        },
+        "cancel" => {
+            twofa::cancel(user);
+            push(Cls::Normal, b"2fa: setup cancelled");
+        },
+        _ => push(Cls::Normal, b"usage: 2fa [status | setup | confirm <code> | off <code> | cancel]"),
+    }
+}
+
 /// `services [list|enable ssh|disable ssh]` -- configure which services start
 /// at boot (persisted to lingfs /services, honored by services::boot_configure).
 fn run_services(arg: &str) {
@@ -1125,7 +1860,7 @@ fn handle_pw_key(k: u8) -> bool {
                 let pw = core::str::from_utf8(&(&*&raw const PW_INPUT)[..PW_LEN]).unwrap_or("");
                 if mode == 1 {
                     let user = lingfs::current_user();
-                    if users::verify(user, pw) {
+                    if users::verify_login(user, pw) {
                         push(Cls::Dim, b"[sudo] ok");
                         PW_MODE = 0;
                         PW_LEN = 0;
@@ -1136,7 +1871,7 @@ fn handle_pw_key(k: u8) -> bool {
                     push(Cls::Err, b"sudo: authentication failure");
                 } else if mode == 2 {
                     let target = core::str::from_utf8(&pend[..plen]).unwrap_or("root");
-                    if users::verify(target, pw) {
+                    if users::verify_login(target, pw) {
                         let mut gb = [0u8; 32];
                         let glen = users::group_of(target, &mut gb).unwrap_or(0);
                         let grp = core::str::from_utf8(&gb[..glen]).unwrap_or("users");
@@ -1149,6 +1884,13 @@ fn handle_pw_key(k: u8) -> bool {
                         push(Cls::Ok, &m[..p.len() + tn]);
                     } else {
                         push(Cls::Err, b"su: authentication failure");
+                    }
+                } else if mode == 3 {
+                    let new = core::str::from_utf8(&pend[..plen]).unwrap_or("");
+                    let old = alloc::string::String::from(lingfs::current_user());
+                    match users::rename(&old, new, pw) {
+                        Ok(m) => push(Cls::Ok, m.as_bytes()),
+                        Err(e) => push(Cls::Err, alloc::format!("rename-user: {e}").as_bytes()),
                     }
                 }
                 PW_MODE = 0;
@@ -1191,25 +1933,37 @@ pub fn key(k: u8) {
             return;
         }
         match k {
-            kb::CTRL_ZOOM_IN => ZOOM = (ZOOM + 1).min(3),
-            kb::CTRL_ZOOM_OUT => ZOOM = (ZOOM - 1).max(1),
-            kb::CTRL_ZOOM_RESET => ZOOM = 1,
+            kb::CTRL_ZOOM_IN => {
+                ZOOM = (ZOOM + 1).min(3);
+                save_theme();
+            },
+            kb::CTRL_ZOOM_OUT => {
+                ZOOM = ZOOM.saturating_sub(1).max(1);
+                save_theme();
+            },
+            kb::CTRL_ZOOM_RESET => {
+                ZOOM = 1;
+                save_theme();
+            },
             kb::CTRL_C => {
-                // Copy the last output line to the clipboard.
-                if COUNT > 0 {
+                // Copy the mouse selection; with none, the last output line.
+                if !copy_selection() && COUNT > 0 {
                     let last = (HEAD + LINES - 1) % LINES;
                     clipboard::set(&rows()[last].text[..rows()[last].len]);
                 }
             },
-            kb::CTRL_V => {
-                let clip = clipboard::get();
-                for &b in clip {
-                    if b >= 0x20 && b < 0x7F && INPUT_LEN < INPUT_MAX {
-                        INPUT[INPUT_LEN] = b;
-                        INPUT_LEN += 1;
-                    }
+            kb::CTRL_A => {
+                // select all the scrollback (then Ctrl+C / right-click copies it)
+                if COUNT > 0 {
+                    SEL_A = Some((TOTAL - COUNT as u64, 0));
+                    SEL_B = Some((TOTAL - 1, COLS));
                 }
             },
+            kb::CTRL_V => paste(),
+            0x1B => sel_clear(),
+            0x09 => tab_complete(),
+            kb::PGUP_KEY => wheel((GRID.5 as i32 - 1).max(1)),
+            kb::PGDN_KEY => wheel(-((GRID.5 as i32 - 1).max(1))),
             // Up/Down walk command history (like a real shell), not the
             // scrollback -- new output already snaps the view to the bottom.
             kb::UP_ARROW => history_recall(1),
@@ -1220,6 +1974,12 @@ pub fn key(k: u8) {
                 let n = INPUT_LEN;
                 tmp[..n].copy_from_slice(&(&*&raw const INPUT)[..n]);
                 INPUT_LEN = 0;
+                // the disk installer's "type ERASE" question takes this line
+                #[cfg(target_arch = "x86_64")]
+                if crate::drivers::installer::awaiting() {
+                    push_install(crate::drivers::installer::answer(core::str::from_utf8(&tmp[..n]).unwrap_or("")));
+                    return;
+                }
                 history_push(&tmp[..n]);
                 run(core::str::from_utf8(&tmp[..n]).unwrap_or(""));
             },
@@ -1249,41 +2009,88 @@ pub fn insert_text(b: &[u8]) {
 }
 
 fn cls_color(c: Cls) -> u32 {
+    let (text, back, accent) = theme_colors();
     match c {
-        Cls::Accent => theme::color(theme::SLOT_ACCENT),
-        Cls::Ok => 0x6AC06A,
-        Cls::Err => theme::color(theme::SLOT_ERROR),
-        Cls::Dim => theme::color(theme::SLOT_DIM),
-        Cls::Normal => theme::color(theme::SLOT_TEXT),
+        Cls::Accent => accent,
+        Cls::Ok => {
+            if is_light(back) {
+                0x1F8A45
+            } else {
+                0x6AC06A
+            }
+        },
+        Cls::Err => {
+            if is_light(back) {
+                0xC03A28
+            } else {
+                theme::color(theme::SLOT_ERROR)
+            }
+        },
+        Cls::Dim => mix(text, back, 2, 5),
+        Cls::Normal => text,
     }
 }
 
 /// Draw the terminal into a window content rect. Grid geometry follows the
-/// zoom: bigger glyphs => fewer rows/cols => lower text resolution.
+/// zoom: bigger glyphs => fewer rows/cols => lower text resolution. The look
+/// is the LingStationX design system's: the terminal's own background color,
+/// a ROYGBIV key rule along the top, corner brackets, and a zsh-style prompt
+/// line (user@host, cwd, and the miao shrine's soul + dirty mark).
 pub fn draw(x: u32, y: u32, w: u32, h: u32) {
-    let panel = theme::color(theme::SLOT_PANEL);
     unsafe {
         if !STARTED {
             STARTED = true;
             banner();
         }
     }
+    let (txt, back, accent) = theme_colors();
+    let dim = mix(txt, back, 2, 5);
+    // The content area in the terminal's own background (the window body
+    // around it keeps the global panel color -- a framed screen).
+    framebuffer::back_fill_rect(x, y, w, h, back);
+    // ROYGBIV rule: the design system's seven keys, across the top edge.
+    let seg_w = w / 7;
+    for (i, c) in ROYGBIV.iter().enumerate() {
+        let sx = x + i as u32 * seg_w;
+        let sw = if i == 6 { w - 6 * seg_w } else { seg_w };
+        framebuffer::back_fill_rect(sx, y, sw, 2, *c);
+    }
+    // Corner brackets (dimmed accent), under the text.
+    let bc = mix(accent, back, 2, 5);
+    let arm = 10u32.min(w / 4);
+    for (cx, cy, dx, dy) in [(x, y + 4, 1i32, 1i32), (x + w - 1, y + 4, -1, 1), (x, y + h - 1, 1, -1), (x + w - 1, y + h - 1, -1, -1)] {
+        let hx = if dx > 0 { cx } else { cx - (arm - 1) };
+        framebuffer::back_fill_rect(hx, cy, arm, 1, bc);
+        let vy = if dy > 0 { cy } else { cy - (arm - 1) };
+        framebuffer::back_fill_rect(cx, vy, 1, arm, bc);
+    }
+
     let z = unsafe { ZOOM };
     let gw = 8 * z;
     let gh = 8 * z + 2 * z;
     let cols = ((w / gw).max(1)) as usize;
     pump_llm(cols.saturating_sub(1));
-    // Reserve the last grid row for the input prompt.
-    let grid_rows = (h / gh).max(2) as usize;
-    let out_rows = grid_rows - 1;
+    // a running disk install moves on a slice per frame and reports here
+    #[cfg(target_arch = "x86_64")]
+    if crate::drivers::installer::running() {
+        push_install(crate::drivers::installer::pump());
+    }
+    // Text starts under the rule; the last two grid rows are the prompt
+    // info line and the input line.
+    let top = y + 5;
+    let grid_rows = (((h.saturating_sub(5)) / gh).max(3)) as usize;
+    let out_rows = grid_rows - 2;
 
     let count = unsafe { COUNT };
     let head = unsafe { HEAD };
     let scroll = unsafe { SCROLL }.min(count.saturating_sub(1));
     // Bottom visible row is (count-1-scroll); show `out_rows` up from there.
     let last = count.saturating_sub(1).saturating_sub(scroll);
-    let first = last.saturating_sub(out_rows - 1);
-    let mut ry = y;
+    let first = last.saturating_sub(out_rows.saturating_sub(1));
+    let abs0 = unsafe { TOTAL } - count as u64; // absolute number of logical row 0
+    unsafe { GRID = (x as i64, top as i64, gw as i64, gh as i64, cols, out_rows, abs0 + first as u64) };
+    let sel_back = mix(accent, back, 2, 5);
+    let mut ry = top;
     for vis in first..=last {
         if count == 0 {
             break;
@@ -1293,41 +2100,87 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
         let r = &rows()[ring];
         let color = cls_color(r.cls);
         let n = r.len.min(cols);
+        let sel = sel_cols(abs0 + vis as u64, n);
+        if let Some((f, t)) = sel {
+            // the selection band: the selected cells, plus a sliver on an empty / short line
+            let wcells = (t.min(cols).saturating_sub(f)).max(if t > f || n == 0 { 1 } else { 0 });
+            if wcells > 0 {
+                let wpx = if t > f { wcells as u32 * gw } else { gw / 2 };
+                framebuffer::back_fill_rect(x + f as u32 * gw, ry, wpx, gh, sel_back);
+            }
+        }
         for (ci, &ch) in r.text[..n].iter().enumerate() {
-            font8x8::draw_char_scaled(x + ci as u32 * gw, ry, ch, color, panel, z);
+            let in_sel = matches!(sel, Some((f, t)) if ci >= f && ci < t);
+            let bg = if in_sel { sel_back } else { back };
+            font8x8::draw_char_scaled(x + ci as u32 * gw, ry, ch, color, bg, z);
         }
         // output in any script (ls of Unicode names, programs that print UTF-8)
-        font8x8::overlay_utf8(x, ry, &r.text[..n], gw, 8 * z, color, panel, cols);
+        if sel.is_none() {
+            font8x8::overlay_utf8(x, ry, &r.text[..n], gw, 8 * z, color, back, cols);
+        }
         ry += gh;
+    }
+
+    // Prompt info line (zsh-style): user@host  /cwd  (miao:soul +)
+    let iy = top + (grid_rows as u32 - 2) * gh;
+    {
+        let max_x = x + w;
+        let mut px = x;
+        let mut seg = |s: &[u8], color: u32| {
+            for &ch in s {
+                if px + gw > max_x {
+                    return;
+                }
+                font8x8::draw_char_scaled(px, iy, ch, color, back, z);
+                px += gw;
+            }
+        };
+        let ok_col = if is_light(back) { 0x1F8A45 } else { 0x6AC06A };
+        let red = if is_light(back) { 0xC03A28 } else { ROYGBIV[0] };
+        let user = lingfs::current_user();
+        seg(user.as_bytes(), ok_col);
+        seg(b"@", dim);
+        let hn = unsafe { &(&*&raw const HOSTNAME)[..HOSTNAME_LEN] };
+        seg(if hn.is_empty() { b"lingos" } else { hn }, accent);
+        seg(b"  /", red);
+        seg(cwd_str().as_bytes(), red);
+        let soul = unsafe { &(&*&raw const MIAO_SOUL)[..MIAO_SOUL_LEN] };
+        if !soul.is_empty() {
+            seg(b"  (", dim);
+            seg(b"miao:", ROYGBIV[6]);
+            seg(soul, ROYGBIV[4]);
+            if unsafe { MIAO_DIRTY } {
+                seg(b" +", ROYGBIV[2]);
+            }
+            seg(b")", dim);
+        }
     }
 
     // Input prompt on the bottom row. In sudo/su password mode, show a
     // "password:" label and mask the entry with asterisks.
-    let py = y + (grid_rows as u32 - 1) * gh;
-    let accent = theme::color(theme::SLOT_ACCENT);
-    let txt = theme::color(theme::SLOT_TEXT);
+    let py = top + (grid_rows as u32 - 1) * gh;
     let pw_mode = unsafe { PW_MODE };
     if pw_mode != 0 {
         let label: &[u8] = b"password:";
         for (ci, &ch) in label.iter().enumerate() {
-            font8x8::draw_char_scaled(x + ci as u32 * gw, py, ch, theme::color(theme::SLOT_DIM), panel, z);
+            font8x8::draw_char_scaled(x + ci as u32 * gw, py, ch, dim, back, z);
         }
         let pl = unsafe { PW_LEN };
         let base = label.len() as u32 + 1;
         let shown = pl.min(cols.saturating_sub(base as usize + 1));
         for i in 0..shown {
-            font8x8::draw_char_scaled(x + (base + i as u32) * gw, py, b'*', txt, panel, z);
+            font8x8::draw_char_scaled(x + (base + i as u32) * gw, py, b'*', txt, back, z);
         }
         framebuffer::back_fill_rect(x + (base + shown as u32) * gw, py, gw / 4 + 1, gh, accent);
     } else {
-        font8x8::draw_char_scaled(x, py, b'>', accent, panel, z);
+        font8x8::draw_char_scaled(x, py, b'>', accent, back, z);
         let inp = unsafe { &(&*&raw const INPUT)[..INPUT_LEN] };
         let shown = inp.len().min(cols.saturating_sub(3));
         let start = inp.len() - shown;
         for (ci, &ch) in inp[start..].iter().enumerate() {
-            font8x8::draw_char_scaled(x + (ci as u32 + 2) * gw, py, ch, txt, panel, z);
+            font8x8::draw_char_scaled(x + (ci as u32 + 2) * gw, py, ch, txt, back, z);
         }
-        font8x8::overlay_utf8(x + 2 * gw, py, &inp[start..], gw, 8 * z, txt, panel, cols);
+        font8x8::overlay_utf8(x + 2 * gw, py, &inp[start..], gw, 8 * z, txt, back, cols);
         framebuffer::back_fill_rect(x + (shown as u32 + 2) * gw, py, gw / 4 + 1, gh, accent);
     }
     let _ = input_str;

@@ -58,6 +58,29 @@ impl Backend for CpuBackend {
     }
 }
 
+/// CPU [`crate::Backend::project_points_warped`]: hyperbolic warp + roll +
+/// perspective per point, spread over every core in cache-sized chunks (a
+/// rayon task per point would cost more in scheduling than the math).
+pub(crate) fn project_warped_cpu(world: &[f32], cam: &CameraParams, warp: &crate::ViewWarp, out: &mut [f32]) {
+    let n = (world.len() / 3).min(out.len() / 3);
+    let run = |(c, dst): (usize, &mut [f32])| {
+        let base = c * CHUNK;
+        for (k, o) in dst.chunks_exact_mut(3).enumerate() {
+            let i = base + k;
+            let (sx, sy, sz) = crate::project_warped(cam, warp, world[3 * i], world[3 * i + 1], world[3 * i + 2]);
+            o[0] = sx;
+            o[1] = sy;
+            o[2] = sz;
+        }
+    };
+    const CHUNK: usize = 2048;
+    if n < CHUNK {
+        out[..3 * n].chunks_mut(3 * CHUNK).enumerate().for_each(run);
+    } else {
+        out[..3 * n].par_chunks_mut(3 * CHUNK).enumerate().for_each(run);
+    }
+}
+
 /// Software z-buffer (the default `Backend::raster_tris`): the CPU twin of the CUDA `raster_tris` kernel. Depth is 1/d
 /// interpolated linearly in screen space (exact for perspective); the nearest triangle wins, a later one wins a tie.
 pub(crate) fn raster_cpu(scene: &crate::RasterScene, out: &mut [u32]) {

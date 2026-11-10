@@ -1,9 +1,119 @@
 // src/gfx/raster.rs â€” software 2-D pixel rasteriser
 // All buffers are row-major Vec<u32> with pixels as 0x00RRGGBB.
 
-/// Fill a triangle using incremental edge evaluation (Pineda 1988).
-/// For convex triangles we break early once we exit the span â€” roughly 2Ã— faster
-/// than scanning the full bounding box.
+/// Depth-test modes for the z-buffered fills (const generic, so each mode is
+/// its own specialised loop): the normal `<` test; a depth-only prepass that
+/// just records the nearest depth; and the shading pass after a prepass, which
+/// shades only where its depth equals (`<=`) the recorded nearest one — each
+/// visible pixel is shaded once instead of once per overlapping triangle.
+pub const Z_LT: u8 = 0;
+pub const Z_PREPASS: u8 = 1;
+pub const Z_LE: u8 = 2;
+
+#[inline(always)]
+fn z_pass<const M: u8>(z: f32, zb: f32) -> bool {
+    if M == Z_LE { z <= zb } else { z < zb }
+}
+
+/// Shared edge-function walker for the solid triangle fills (Pineda 1988).
+///
+/// Calls `f(idx, px, py, w0, w1, w2)` for every covered pixel centre, with the
+/// barycentric weights of vertices 0/1/2. Per triangle it hoists what the old
+/// per-fill loops recomputed per pixel — the edge sum `e0+e1+e2` is twice the
+/// signed area, constant over the triangle, so one reciprocal replaces three
+/// divides per pixel — and per row it solves each edge for the covered pixel
+/// range, so the empty bounding-box corners of thin / diagonal triangles are
+/// skipped instead of scanned. The exact per-pixel inside test is kept, so
+/// coverage is the same as before.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn raster_tri<F: FnMut(usize, i32, i32, f32, f32, f32)>(
+    width: usize,
+    height: usize,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    mut f: F,
+) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite()) {
+        return;
+    }
+    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
+    let max_x = x0.max(x1).max(x2).min(width as f32 - 1.0) as i32;
+    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
+    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
+    if min_x > max_x || min_y > max_y {
+        return;
+    }
+    // x-step deltas: adding 1 to px changes each edge by -(Δy)
+    let de0 = -(y1 - y0);
+    let de1 = -(y2 - y1);
+    let de2 = -(y0 - y2);
+    let fx0 = min_x as f32 + 0.5;
+    let tot = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+    if tot.abs() <= 1e-6 {
+        return; // zero-area sliver: covers no pixel centre
+    }
+    let inv = 1.0 / tot;
+    let sgn = tot.signum();
+    let dmax = max_x - min_x;
+    for py in min_y..=max_y {
+        let fy = py as f32 + 0.5;
+        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
+        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
+        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
+        // analytic span: each edge (in the winding's sign) is linear in px, so
+        // solve it >= 0 for the pixel offset and widen by one pixel each side
+        let mut lo = 0i32;
+        let mut hi = dmax;
+        for (ev, d) in [(e0, de0), (e1, de1), (e2, de2)] {
+            let a = ev * sgn;
+            let d = d * sgn;
+            if d.abs() < 1e-12 {
+                if a < 0.0 {
+                    lo = 1;
+                    hi = 0;
+                }
+            } else {
+                let t = -a / d;
+                if d > 0.0 {
+                    lo = lo.max((t.floor() as i32).saturating_sub(1));
+                } else {
+                    hi = hi.min((t.ceil() as i32).saturating_add(1));
+                }
+            }
+        }
+        if lo > hi {
+            continue;
+        }
+        let lof = lo as f32;
+        e0 += de0 * lof;
+        e1 += de1 * lof;
+        e2 += de2 * lof;
+        let row = py as usize * width;
+        let mut in_span = false;
+        for px in (min_x + lo)..=(min_x + hi) {
+            let inside = (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
+            if inside {
+                in_span = true;
+                f(row + px as usize, px, py, e1 * inv, e2 * inv, e0 * inv);
+            } else if in_span {
+                break; // convex — span finished for this scanline
+            }
+            e0 += de0;
+            e1 += de1;
+            e2 += de2;
+        }
+    }
+}
+
+/// Fill a triangle with a flat colour (no depth test).
 #[allow(clippy::too_many_arguments)]
 pub fn fill_triangle(
     buf: &mut [u32],
@@ -17,81 +127,48 @@ pub fn fill_triangle(
     x2: f32,
     y2: f32,
 ) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    // Guard against NaN / Inf from behind-camera projection blowup.
-    if !x0.is_finite()
-        || !y0.is_finite()
-        || !x1.is_finite()
-        || !y1.is_finite()
-        || !x2.is_finite()
-        || !y2.is_finite()
-    {
-        return;
-    }
-
-    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
-    let max_x = x0.max(x1).max(x2).min(width as f32 - 1.0) as i32;
-    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
-    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
-    if min_x > max_x || min_y > max_y {
-        return;
-    }
-
-    // x-step deltas: adding 1 to fx changes each edge by -(Î”y)
-    let de0 = -(y1 - y0);
-    let de1 = -(y2 - y1);
-    let de2 = -(y0 - y2);
-
-    for py in min_y..=max_y {
-        let fy = py as f32 + 0.5;
-        let fx0 = min_x as f32 + 0.5;
-        // Initial edge values at the leftmost column of this row
-        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
-        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
-        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
-
-        let mut in_span = false;
-        let row = py as usize * width;
-        for px in min_x..=max_x {
-            let inside =
-                (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
-            if inside {
-                buf[row + px as usize] = color;
-                in_span = true;
-            } else if in_span {
-                break; // convex â€” span finished for this scanline
-            }
-            e0 += de0;
-            e1 += de1;
-            e2 += de2;
-        }
-    }
+    raster_tri(width, height, x0, y0, x1, y1, x2, y2, |idx, _, _, _, _, _| buf[idx] = color);
 }
 
 /// Posterise one interpolated Gouraud pixel (0..255 channels) into `bands`
 /// discrete luminance levels, chroma preserved, softened by `softness`. Runs
 /// once per pixel on the smoothly interpolated colour, so band edges follow
 /// the shaded surface instead of being pinned to triangle/mesh vertices —
-/// see `ling_graphics::shading` for the underlying posterisation model.
+/// this is `ling_graphics::shading::posterize_soft` evaluated directly in
+/// 0..255 space (no /255 · ×255 round trip per channel).
 /// `bands < 2` skips the work entirely (smooth Gouraud, unchanged).
-#[inline]
+#[inline(always)]
 fn posterize_span(r: f32, g: f32, b: f32, bands: u32, softness: f32) -> (f32, f32, f32) {
     if bands < 2 {
         return (r, g, b);
     }
-    let linear = [r / 255.0, g / 255.0, b / 255.0];
-    let out = ling_graphics::shading::posterize_soft(linear, bands, softness);
-    (out[0] * 255.0, out[1] * 255.0, out[2] * 255.0)
+    let nb = bands as f32;
+    let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    if lum < 255.0e-5 {
+        return (r, g, b);
+    }
+    let band = (lum * (nb / 255.0)).floor().min(nb - 1.0);
+    let k = ((band + 0.5) * (255.0 / nb) / lum).clamp(0.0, 4.0);
+    let (hr, hg, hb) = ((r * k).min(255.0), (g * k).min(255.0), (b * k).min(255.0));
+    let s = softness.clamp(0.0, 1.0);
+    if s <= 0.0 {
+        (hr, hg, hb)
+    } else {
+        (hr + (r - hr) * s, hg + (g - hg) * s, hb + (b - hb) * s)
+    }
+}
+
+#[inline(always)]
+fn pack_clamped(r: f32, g: f32, b: f32) -> u32 {
+    ((r.clamp(0.0, 255.0) as u32) << 16) | ((g.clamp(0.0, 255.0) as u32) << 8) | (b.clamp(0.0, 255.0) as u32)
 }
 
 /// Gouraud-interpolated triangle with per-pixel cel-shade posterisation.
 ///
 /// Vertex colours are linearly interpolated with barycentric weights; the
-/// resulting per-pixel luminance is snapped to 3 discrete toon bands (shadow /
-/// mid / lit) matching `cel_quantize` â€” giving a smooth gradient of bands across
-/// the face rather than a per-vertex flat-shade seam.
+/// resulting per-pixel luminance is snapped to `bands` discrete toon bands
+/// — giving a smooth gradient of bands across the face rather than a
+/// per-vertex flat-shade seam.
 ///
 /// `alpha` + `mode`: when `alpha < 1.0` or `mode != 0` the pixel is composited
 /// over the existing buffer instead of directly overwritten.
@@ -116,95 +193,24 @@ pub fn fill_triangle_gouraud(
     mode: u8,
     tag_unlit: bool,
 ) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    if !x0.is_finite()
-        || !y0.is_finite()
-        || !x1.is_finite()
-        || !y1.is_finite()
-        || !x2.is_finite()
-        || !y2.is_finite()
-    {
-        return;
-    }
-
-    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
-    let max_x = x0.max(x1).max(x2).min(width as f32 - 1.0) as i32;
-    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
-    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
-    if min_x > max_x || min_y > max_y {
-        return;
-    }
-
-    // unpack vertex colours to float rgb
-    let (r0, g0, b0) = (
-        (c0 >> 16 & 0xFF) as f32,
-        (c0 >> 8 & 0xFF) as f32,
-        (c0 & 0xFF) as f32,
-    );
-    let (r1, g1, b1) = (
-        (c1 >> 16 & 0xFF) as f32,
-        (c1 >> 8 & 0xFF) as f32,
-        (c1 & 0xFF) as f32,
-    );
-    let (r2, g2, b2) = (
-        (c2 >> 16 & 0xFF) as f32,
-        (c2 >> 8 & 0xFF) as f32,
-        (c2 & 0xFF) as f32,
-    );
-
-    let de0 = -(y1 - y0);
-    let de1 = -(y2 - y1);
-    let de2 = -(y0 - y2);
+    let (r0, g0, b0) = ((c0 >> 16 & 0xFF) as f32, (c0 >> 8 & 0xFF) as f32, (c0 & 0xFF) as f32);
+    let (r1, g1, b1) = ((c1 >> 16 & 0xFF) as f32, (c1 >> 8 & 0xFF) as f32, (c1 & 0xFF) as f32);
+    let (r2, g2, b2) = ((c2 >> 16 & 0xFF) as f32, (c2 >> 8 & 0xFF) as f32, (c2 & 0xFF) as f32);
     let blended = alpha < 0.999 || mode != 0;
-
-    for py in min_y..=max_y {
-        let fy = py as f32 + 0.5;
-        let fx0 = min_x as f32 + 0.5;
-        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
-        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
-        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
-        let mut in_span = false;
-        let row = py as usize * width;
-        for px in min_x..=max_x {
-            let inside =
-                (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
-            if inside {
-                let tot = e0 + e1 + e2;
-                if tot.abs() > 1e-6 {
-                    let w2 = e0 / tot;
-                    let w0 = e1 / tot;
-                    let w1 = e2 / tot;
-                    let r = r0 * w0 + r1 * w1 + r2 * w2;
-                    let g = g0 * w0 + g1 * w1 + g2 * w2;
-                    let b = b0 * w0 + b1 * w1 + b2 * w2;
-                    let (r, g, b) = posterize_span(r, g, b, bands, softness);
-                    let packed = ((r.clamp(0.0, 255.0) as u32) << 16)
-                        | ((g.clamp(0.0, 255.0) as u32) << 8)
-                        | (b.clamp(0.0, 255.0) as u32);
-                    if blended {
-                        composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
-                        if tag_unlit {
-                            buf[row + px as usize] |= crate::gfx::UNLIT;
-                        }
-                    } else {
-                        buf[row + px as usize] = if tag_unlit {
-                            packed | crate::gfx::UNLIT
-                        } else {
-                            packed
-                        };
-                    }
-                }
-                in_span = true;
-            } else if in_span {
-                break;
-            }
-            e0 += de0;
-            e1 += de1;
-            e2 += de2;
+    let tag = if tag_unlit { crate::gfx::UNLIT } else { 0 };
+    raster_tri(width, height, x0, y0, x1, y1, x2, y2, |idx, px, py, w0, w1, w2| {
+        let r = r0 * w0 + r1 * w1 + r2 * w2;
+        let g = g0 * w0 + g1 * w1 + g2 * w2;
+        let b = b0 * w0 + b1 * w1 + b2 * w2;
+        let (r, g, b) = posterize_span(r, g, b, bands, softness);
+        let packed = pack_clamped(r, g, b);
+        if blended {
+            composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
+            buf[idx] |= tag;
+        } else {
+            buf[idx] = packed | tag;
         }
-    }
+    });
 }
 
 /// Alpha-composite `color` over the pixel at (x,y) at coverage `cov` using the
@@ -368,65 +374,39 @@ pub fn fill_triangle_z(
     y2: f32,
     z2: f32,
 ) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    if !x0.is_finite()
-        || !y0.is_finite()
-        || !x1.is_finite()
-        || !y1.is_finite()
-        || !x2.is_finite()
-        || !y2.is_finite()
-    {
-        return;
-    }
+    fill_triangle_z_mode::<Z_LT>(buf, zbuf, width, height, color, x0, y0, z0, x1, y1, z1, x2, y2, z2)
+}
 
-    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
-    let max_x = x0.max(x1).max(x2).min(width as f32 - 1.0) as i32;
-    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
-    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
-    if min_x > max_x || min_y > max_y {
-        return;
-    }
-
-    let de0 = -(y1 - y0);
-    let de1 = -(y2 - y1);
-    let de2 = -(y0 - y2);
-
+/// [`fill_triangle_z`] in depth mode `M` ([`Z_LT`] / [`Z_PREPASS`] / [`Z_LE`]).
+/// The prepass writes depth only (`buf` untouched).
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn fill_triangle_z_mode<const M: u8>(
+    buf: &mut [u32],
+    zbuf: &mut [f32],
+    width: usize,
+    height: usize,
+    color: u32,
+    x0: f32,
+    y0: f32,
+    z0: f32,
+    x1: f32,
+    y1: f32,
+    z1: f32,
+    x2: f32,
+    y2: f32,
+    z2: f32,
+) {
     let pp = persp_iw(z0, z1, z2);
-    for py in min_y..=max_y {
-        let fy = py as f32 + 0.5;
-        let fx0 = min_x as f32 + 0.5;
-        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
-        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
-        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
-        let mut in_span = false;
-        let row = py as usize * width;
-        for px in min_x..=max_x {
-            let inside =
-                (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
-            if inside {
-                let tot = e0 + e1 + e2;
-                if tot.abs() > 1e-6 {
-                    let w2 = e0 / tot;
-                    let w0 = e1 / tot;
-                    let w1 = e2 / tot;
-                    let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
-                    let idx = row + px as usize;
-                    if z < zbuf[idx] {
-                        zbuf[idx] = z;
-                        buf[idx] = color;
-                    }
-                }
-                in_span = true;
-            } else if in_span {
-                break;
+    raster_tri(width, height, x0, y0, x1, y1, x2, y2, |idx, _, _, w0, w1, w2| {
+        let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
+        if z_pass::<M>(z, zbuf[idx]) {
+            zbuf[idx] = z;
+            if M != Z_PREPASS {
+                buf[idx] = color;
             }
-            e0 += de0;
-            e1 += de1;
-            e2 += de2;
         }
-    }
+    });
 }
 
 /// Solid triangle composited with blend `mode` + `alpha` (no depth test).
@@ -447,67 +427,19 @@ pub fn fill_triangle_blend(
     x2: f32,
     y2: f32,
 ) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    if !x0.is_finite()
-        || !y0.is_finite()
-        || !x1.is_finite()
-        || !y1.is_finite()
-        || !x2.is_finite()
-        || !y2.is_finite()
-    {
-        return;
-    }
     let alpha = alpha.clamp(0.0, 1.0);
     if alpha <= 0.0 {
         return;
     }
     let fast_add = mode == 1; // integer saturating-add fast path
-    let src = if fast_add && alpha < 0.999 {
-        scale_rgb(color, alpha)
-    } else {
-        color
-    };
-
-    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
-    let max_x = x0.max(x1).max(x2).min(width as f32 - 1.0) as i32;
-    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
-    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
-    if min_x > max_x || min_y > max_y {
-        return;
-    }
-
-    let de0 = -(y1 - y0);
-    let de1 = -(y2 - y1);
-    let de2 = -(y0 - y2);
-
-    for py in min_y..=max_y {
-        let fy = py as f32 + 0.5;
-        let fx0 = min_x as f32 + 0.5;
-        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
-        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
-        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
-        let mut in_span = false;
-        for px in min_x..=max_x {
-            let inside =
-                (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
-            if inside {
-                if fast_add {
-                    let idx = py as usize * width + px as usize;
-                    buf[idx] = add_sat(buf[idx], src);
-                } else {
-                    composite_pixel(buf, width, height, px, py, color, alpha, mode, false);
-                }
-                in_span = true;
-            } else if in_span {
-                break;
-            }
-            e0 += de0;
-            e1 += de1;
-            e2 += de2;
+    let src = if fast_add && alpha < 0.999 { scale_rgb(color, alpha) } else { color };
+    raster_tri(width, height, x0, y0, x1, y1, x2, y2, |idx, px, py, _, _, _| {
+        if fast_add {
+            buf[idx] = add_sat(buf[idx], src);
+        } else {
+            composite_pixel(buf, width, height, px, py, color, alpha, mode, false);
         }
-    }
+    });
 }
 
 /// Depth-tested translucent triangle: composites with blend `mode` + `alpha`
@@ -532,78 +464,23 @@ pub fn fill_triangle_z_blend(
     y2: f32,
     z2: f32,
 ) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    if !x0.is_finite()
-        || !y0.is_finite()
-        || !x1.is_finite()
-        || !y1.is_finite()
-        || !x2.is_finite()
-        || !y2.is_finite()
-    {
-        return;
-    }
     let alpha = alpha.clamp(0.0, 1.0);
     if alpha <= 0.0 {
         return;
     }
     let fast_add = mode == 1; // integer saturating-add fast path
-    let src = if fast_add && alpha < 0.999 {
-        scale_rgb(color, alpha)
-    } else {
-        color
-    };
-
-    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
-    let max_x = x0.max(x1).max(x2).min(width as f32 - 1.0) as i32;
-    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
-    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
-    if min_x > max_x || min_y > max_y {
-        return;
-    }
-
-    let de0 = -(y1 - y0);
-    let de1 = -(y2 - y1);
-    let de2 = -(y0 - y2);
-
+    let src = if fast_add && alpha < 0.999 { scale_rgb(color, alpha) } else { color };
     let pp = persp_iw(z0, z1, z2);
-    for py in min_y..=max_y {
-        let fy = py as f32 + 0.5;
-        let fx0 = min_x as f32 + 0.5;
-        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
-        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
-        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
-        let mut in_span = false;
-        let row = py as usize * width;
-        for px in min_x..=max_x {
-            let inside =
-                (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
-            if inside {
-                let tot = e0 + e1 + e2;
-                if tot.abs() > 1e-6 {
-                    let w2 = e0 / tot;
-                    let w0 = e1 / tot;
-                    let w1 = e2 / tot;
-                    let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
-                    if z < zbuf[row + px as usize] {
-                        if fast_add {
-                            let idx = row + px as usize;
-                            buf[idx] = add_sat(buf[idx], src);
-                        } else {
-                            composite_pixel(buf, width, height, px, py, color, alpha, mode, false);
-                        }
-                    }
-                }
-                in_span = true;
-            } else if in_span {
-                break;
+    raster_tri(width, height, x0, y0, x1, y1, x2, y2, |idx, px, py, w0, w1, w2| {
+        let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
+        if z < zbuf[idx] {
+            if fast_add {
+                buf[idx] = add_sat(buf[idx], src);
+            } else {
+                composite_pixel(buf, width, height, px, py, color, alpha, mode, false);
             }
-            e0 += de0;
-            e1 += de1;
-            e2 += de2;
         }
-    }
+    });
 }
 
 /// Depth-tested Gouraud + cel-shade triangle (z-buffer path).
@@ -632,100 +509,59 @@ pub fn fill_triangle_gouraud_z(
     mode: u8,
     tag_unlit: bool,
 ) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    if !x0.is_finite()
-        || !y0.is_finite()
-        || !x1.is_finite()
-        || !y1.is_finite()
-        || !x2.is_finite()
-        || !y2.is_finite()
-    {
-        return;
-    }
+    fill_triangle_gouraud_z_mode::<Z_LT>(buf, zbuf, width, height, x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands, softness, alpha, mode, tag_unlit)
+}
 
-    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
-    let max_x = x0.max(x1).max(x2).min(width as f32 - 1.0) as i32;
-    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
-    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
-    if min_x > max_x || min_y > max_y {
-        return;
-    }
-
-    let (r0, g0, b0) = (
-        (c0 >> 16 & 0xFF) as f32,
-        (c0 >> 8 & 0xFF) as f32,
-        (c0 & 0xFF) as f32,
-    );
-    let (r1, g1, b1) = (
-        (c1 >> 16 & 0xFF) as f32,
-        (c1 >> 8 & 0xFF) as f32,
-        (c1 & 0xFF) as f32,
-    );
-    let (r2, g2, b2) = (
-        (c2 >> 16 & 0xFF) as f32,
-        (c2 >> 8 & 0xFF) as f32,
-        (c2 & 0xFF) as f32,
-    );
-    let de0 = -(y1 - y0);
-    let de1 = -(y2 - y1);
-    let de2 = -(y0 - y2);
+/// [`fill_triangle_gouraud_z`] in depth mode `M` (see [`Z_LE`]).
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn fill_triangle_gouraud_z_mode<const M: u8>(
+    buf: &mut [u32],
+    zbuf: &mut [f32],
+    width: usize,
+    height: usize,
+    x0: f32,
+    y0: f32,
+    z0: f32,
+    c0: u32,
+    x1: f32,
+    y1: f32,
+    z1: f32,
+    c1: u32,
+    x2: f32,
+    y2: f32,
+    z2: f32,
+    c2: u32,
+    bands: u32,
+    softness: f32,
+    alpha: f32,
+    mode: u8,
+    tag_unlit: bool,
+) {
+    let (r0, g0, b0) = ((c0 >> 16 & 0xFF) as f32, (c0 >> 8 & 0xFF) as f32, (c0 & 0xFF) as f32);
+    let (r1, g1, b1) = ((c1 >> 16 & 0xFF) as f32, (c1 >> 8 & 0xFF) as f32, (c1 & 0xFF) as f32);
+    let (r2, g2, b2) = ((c2 >> 16 & 0xFF) as f32, (c2 >> 8 & 0xFF) as f32, (c2 & 0xFF) as f32);
     let blended = alpha < 0.999 || mode != 0;
-
+    let tag = if tag_unlit { crate::gfx::UNLIT } else { 0 };
     let pp = persp_iw(z0, z1, z2);
-    for py in min_y..=max_y {
-        let fy = py as f32 + 0.5;
-        let fx0 = min_x as f32 + 0.5;
-        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
-        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
-        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
-        let mut in_span = false;
-        let row = py as usize * width;
-        for px in min_x..=max_x {
-            let inside =
-                (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
-            if inside {
-                let tot = e0 + e1 + e2;
-                if tot.abs() > 1e-6 {
-                    let w2 = e0 / tot;
-                    let w0 = e1 / tot;
-                    let w1 = e2 / tot;
-                    let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
-                    let idx = row + px as usize;
-                    if z < zbuf[idx] {
-                        let r = r0 * w0 + r1 * w1 + r2 * w2;
-                        let g = g0 * w0 + g1 * w1 + g2 * w2;
-                        let b = b0 * w0 + b1 * w1 + b2 * w2;
-                        let (r, g, b) = posterize_span(r, g, b, bands, softness);
-                        let packed = ((r.clamp(0.0, 255.0) as u32) << 16)
-                            | ((g.clamp(0.0, 255.0) as u32) << 8)
-                            | (b.clamp(0.0, 255.0) as u32);
-                        if blended {
-                            // Translucent: test depth but don't write it so layers stack correctly.
-                            composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
-                            if tag_unlit {
-                                buf[idx] |= crate::gfx::UNLIT;
-                            }
-                        } else {
-                            zbuf[idx] = z;
-                            buf[idx] = if tag_unlit {
-                                packed | crate::gfx::UNLIT
-                            } else {
-                                packed
-                            };
-                        }
-                    }
-                }
-                in_span = true;
-            } else if in_span {
-                break;
+    raster_tri(width, height, x0, y0, x1, y1, x2, y2, |idx, px, py, w0, w1, w2| {
+        let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
+        if z_pass::<M>(z, zbuf[idx]) {
+            let r = r0 * w0 + r1 * w1 + r2 * w2;
+            let g = g0 * w0 + g1 * w1 + g2 * w2;
+            let b = b0 * w0 + b1 * w1 + b2 * w2;
+            let (r, g, b) = posterize_span(r, g, b, bands, softness);
+            let packed = pack_clamped(r, g, b);
+            if blended {
+                // Translucent: test depth but don't write it so layers stack correctly.
+                composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
+                buf[idx] |= tag;
+            } else {
+                zbuf[idx] = z;
+                buf[idx] = packed | tag;
             }
-            e0 += de0;
-            e1 += de1;
-            e2 += de2;
         }
-    }
+    });
 }
 
 /// Axis-aligned rectangle filled with a gradient from `c0` to `c1`.
@@ -775,6 +611,57 @@ pub fn fill_rect_grad(
     let y0 = y.floor().max(0.0) as i32;
     let x1 = (x + rw).ceil().min(width as f32) as i32;
     let y1 = (y + rh).ceil().min(height as f32) as i32;
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+
+    // ── fast paths: opaque + normal blend writes whole rows at once ──
+    // (UI chrome tends to be large solid / gradient rects; the per-pixel
+    // composite_pixel path below costs ~20ns/px, these ~0.3ns/px.)
+    if alpha >= 1.0 && mode == 0 {
+        let (xs, xe) = (x0 as usize, x1 as usize);
+        if c0 == c1 {
+            // solid rect → memset each row
+            for py in y0 as usize..y1 as usize {
+                buf[py * width + xs..py * width + xe].fill(c0);
+            }
+            return;
+        }
+        if dir != 0 {
+            // vertical gradient → one colour per row
+            for py in y0..y1 {
+                let t = ((py as f32 + 0.5 - y) / rh).clamp(0.0, 1.0);
+                let col = if oklab {
+                    crate::gfx::color::mix_oklab(c0, c1, t)
+                } else {
+                    let r = r0 + (r1 - r0) * t;
+                    let g = g0 + (g1 - g0) * t;
+                    let b = b0 + (b1 - b0) * t;
+                    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+                };
+                let py = py as usize;
+                buf[py * width + xs..py * width + xe].fill(col);
+            }
+        } else {
+            // horizontal gradient → compute one row, copy it to the rest
+            let mut row: Vec<u32> = Vec::with_capacity(xe - xs);
+            for px in x0..x1 {
+                let t = ((px as f32 + 0.5 - x) / rw).clamp(0.0, 1.0);
+                row.push(if oklab {
+                    crate::gfx::color::mix_oklab(c0, c1, t)
+                } else {
+                    let r = r0 + (r1 - r0) * t;
+                    let g = g0 + (g1 - g0) * t;
+                    let b = b0 + (b1 - b0) * t;
+                    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+                });
+            }
+            for py in y0 as usize..y1 as usize {
+                buf[py * width + xs..py * width + xe].copy_from_slice(&row);
+            }
+        }
+        return;
+    }
 
     for py in y0..y1 {
         let tv = ((py as f32 + 0.5 - y) / rh).clamp(0.0, 1.0);
@@ -865,6 +752,45 @@ pub fn fill_disc_soft(
     }
 }
 
+/// Walk the pixels of the aliased line (x0,y0)→(x1,y1), calling `plot(idx)`
+/// for each one inside the buffer.
+///
+/// Clip-invariant: the pixel at each step along the major axis is a pure
+/// function of the *unclipped* line (integer endpoints by `floor`, which —
+/// unlike truncation — commutes with the whole-pixel y shift of a raster
+/// strip; minor coordinate rounded from the exact slope). So a line drawn into
+/// several strips, or clipped by the screen edge, lights exactly the pixels the
+/// whole line would — no one-pixel kinks at strip seams, as restarting
+/// Bresenham from clipped endpoints gave. Only the visible run is walked.
+#[inline(always)]
+fn walk_line<F: FnMut(usize)>(width: usize, height: usize, x0: f32, y0: f32, x1: f32, y1: f32, mut plot: F) {
+    let (ax, ay, bx, by) = (x0.floor() as i64, y0.floor() as i64, x1.floor() as i64, y1.floor() as i64);
+    let steep = (by - ay).abs() > (bx - ax).abs();
+    let (ma0, mi0, ma1, mi1, mlen, nlen) = if steep { (ay, ax, by, bx, height, width) } else { (ax, ay, bx, by, width, height) };
+    let (ma0, mi0, ma1, mi1) = if ma0 > ma1 { (ma1, mi1, ma0, mi0) } else { (ma0, mi0, ma1, mi1) };
+    let span = ma1 - ma0;
+    let slope = if span == 0 { 0.0 } else { (mi1 - mi0) as f64 / span as f64 };
+    let mut lo = ma0.max(0);
+    let mut hi = ma1.min(mlen as i64 - 1);
+    if slope != 0.0 {
+        let ta = ma0 as f64 + (-1.0 - mi0 as f64) / slope;
+        let tb = ma0 as f64 + (nlen as f64 - mi0 as f64) / slope;
+        lo = lo.max(ta.min(tb).floor() as i64 - 1);
+        hi = hi.min(ta.max(tb).ceil() as i64 + 1);
+    } else if mi0 < 0 || mi0 >= nlen as i64 {
+        return;
+    }
+    let mut t = lo;
+    while t <= hi {
+        let m = mi0 + ((t - ma0) as f64 * slope).round() as i64;
+        let (x, y) = if steep { (m, t) } else { (t, m) };
+        if x >= 0 && y >= 0 && (x as usize) < width && (y as usize) < height {
+            plot(y as usize * width + x as usize);
+        }
+        t += 1;
+    }
+}
+
 /// Cohen-Sutherland clip then Bresenham integer line drawing.
 /// Lines with one endpoint way off-screen (from behind-camera perspective blowup)
 /// are clipped to the viewport before rasterisation so Bresenham never iterates
@@ -886,44 +812,8 @@ pub fn draw_line(
     if !x0.is_finite() || !y0.is_finite() || !x1.is_finite() || !y1.is_finite() {
         return;
     }
-
-    let xmax = (width - 1) as f32;
-    let ymax = (height - 1) as f32;
-
-    let (mut ax, mut ay, mut bx, mut by) = (x0, y0, x1, y1);
-    if !cs_clip(&mut ax, &mut ay, &mut bx, &mut by, xmax, ymax) {
-        return;
-    }
-
     let color = color | crate::gfx::UNLIT;
-
-    // Bresenham
-    let mut x = ax as i32;
-    let mut y = ay as i32;
-    let x2 = bx as i32;
-    let y2 = by as i32;
-    let dx = (x2 - x).abs();
-    let dy = -((y2 - y).abs());
-    let sx: i32 = if x < x2 { 1 } else { -1 };
-    let sy: i32 = if y < y2 { 1 } else { -1 };
-    let mut err = dx + dy;
-    loop {
-        if x >= 0 && y >= 0 && (x as usize) < width && (y as usize) < height {
-            buf[y as usize * width + x as usize] = color;
-        }
-        if x == x2 && y == y2 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
-    }
+    walk_line(width, height, x0, y0, x1, y1, |idx| buf[idx] = color);
 }
 
 /// Fast saturating per-channel additive of `src` over `dst` (sRGB bytes).
@@ -966,110 +856,19 @@ pub fn draw_line_blend(
     if !x0.is_finite() || !y0.is_finite() || !x1.is_finite() || !y1.is_finite() {
         return;
     }
-    let xmax = (width - 1) as f32;
-    let ymax = (height - 1) as f32;
-    let (mut ax, mut ay, mut bx, mut by) = (x0, y0, x1, y1);
-    if !cs_clip(&mut ax, &mut ay, &mut bx, &mut by, xmax, ymax) {
-        return;
-    }
     let fast_add = mode == 1;
-    let src = if fast_add && alpha < 0.999 {
-        scale_rgb(color, alpha.clamp(0.0, 1.0))
-    } else {
-        color
-    };
-    let mut x = ax as i32;
-    let mut y = ay as i32;
-    let x2 = bx as i32;
-    let y2 = by as i32;
-    let dx = (x2 - x).abs();
-    let dy = -((y2 - y).abs());
-    let sx: i32 = if x < x2 { 1 } else { -1 };
-    let sy: i32 = if y < y2 { 1 } else { -1 };
-    let mut err = dx + dy;
-    loop {
-        if x >= 0 && y >= 0 && (x as usize) < width && (y as usize) < height {
-            if fast_add {
-                let idx = y as usize * width + x as usize;
-                buf[idx] = add_sat(buf[idx], src) | crate::gfx::UNLIT;
-            } else {
-                composite_pixel(buf, width, height, x, y, color, alpha, mode, false);
-                let idx = y as usize * width + x as usize;
-                buf[idx] |= crate::gfx::UNLIT;
-            }
-        }
-        if x == x2 && y == y2 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
-    }
-}
-
-// â”€â”€ Cohen-Sutherland helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-#[inline]
-fn cs_code(x: f32, y: f32, xmax: f32, ymax: f32) -> u8 {
-    let mut c = 0u8;
-    if x < 0.0 {
-        c |= 1;
-    }
-    if x > xmax {
-        c |= 2;
-    }
-    if y < 0.0 {
-        c |= 4;
-    }
-    if y > ymax {
-        c |= 8;
-    }
-    c
-}
-
-/// Returns true if the segment (ax,ay)â†’(bx,by) has any part inside the viewport;
-/// clips the endpoints in-place.  Returns false if entirely outside.
-fn cs_clip(ax: &mut f32, ay: &mut f32, bx: &mut f32, by: &mut f32, xmax: f32, ymax: f32) -> bool {
-    loop {
-        let ca = cs_code(*ax, *ay, xmax, ymax);
-        let cb = cs_code(*bx, *by, xmax, ymax);
-        if ca | cb == 0 {
-            return true;
-        } // both inside
-        if ca & cb != 0 {
-            return false;
-        } // both outside same half-plane
-        let co = if ca != 0 { ca } else { cb };
-        let dx = *bx - *ax;
-        let dy = *by - *ay;
-        let (nx, ny) = if co & 1 != 0 {
-            // left edge  x = 0
-            (0.0_f32, *ay + dy * (0.0 - *ax) / dx)
-        } else if co & 2 != 0 {
-            // right edge  x = xmax
-            (xmax, *ay + dy * (xmax - *ax) / dx)
-        } else if co & 4 != 0 {
-            // top edge  y = 0
-            (*ax + dx * (0.0 - *ay) / dy, 0.0_f32)
+    let src = if fast_add && alpha < 0.999 { scale_rgb(color, alpha.clamp(0.0, 1.0)) } else { color };
+    walk_line(width, height, x0, y0, x1, y1, |idx| {
+        if fast_add {
+            buf[idx] = add_sat(buf[idx], src) | crate::gfx::UNLIT;
         } else {
-            // bottom edge  y = ymax
-            (*ax + dx * (ymax - *ay) / dy, ymax)
-        };
-        if co == ca {
-            *ax = nx;
-            *ay = ny;
-        } else {
-            *bx = nx;
-            *by = ny;
+            let (x, y) = ((idx % width) as i32, (idx / width) as i32);
+            composite_pixel(buf, width, height, x, y, color, alpha, mode, false);
+            buf[idx] |= crate::gfx::UNLIT;
         }
-    }
+    });
 }
+
 
 // â”€â”€ Anti-aliased primitives (used by the vector-font renderer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1090,35 +889,38 @@ pub fn blend_pixel(
     if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
         return;
     }
-    let cov = cov.clamp(0.0, 1.0);
-    if cov <= 0.0 {
+    if !(cov > 0.0) {
+        return; // also rejects NaN
+    }
+    // 8-bit fixed-point coverage; red+blue blend together in one u32 (lanes at
+    // bits 0 and 16), green in another — two multiplies instead of six float
+    // lerps, two clamps and three float→int conversions per pixel.
+    let a = if cov >= 1.0 { 256 } else { (cov * 256.0) as u32 };
+    if a == 0 {
         return;
     }
     let idx = y as usize * w + x as usize;
     let dst = buf[idx];
-    let sr = ((color >> 16) & 0xFF) as f32;
-    let sg = ((color >> 8) & 0xFF) as f32;
-    let sb = (color & 0xFF) as f32;
-    let dr = ((dst >> 16) & 0xFF) as f32;
-    let dg = ((dst >> 8) & 0xFF) as f32;
-    let db = (dst & 0xFF) as f32;
-    let (nr, ng, nb) = if additive {
-        (
-            (dr + sr * cov).min(255.0),
-            (dg + sg * cov).min(255.0),
-            (db + sb * cov).min(255.0),
-        )
+    let out = if additive {
+        let src = ((((color & 0x00FF_00FF) * a) >> 8) & 0x00FF_00FF) | ((((color & 0x0000_FF00) * a) >> 8) & 0x0000_FF00);
+        add_sat(dst & crate::gfx::RGB_MASK, src)
     } else {
-        (
-            sr * cov + dr * (1.0 - cov),
-            sg * cov + dg * (1.0 - cov),
-            sb * cov + db * (1.0 - cov),
-        )
+        let ia = 256 - a;
+        let rb = (((color & 0x00FF_00FF) * a + (dst & 0x00FF_00FF) * ia) >> 8) & 0x00FF_00FF;
+        let g = (((color & 0x0000_FF00) * a + (dst & 0x0000_FF00) * ia) >> 8) & 0x0000_FF00;
+        rb | g
     };
-    buf[idx] = ((nr as u32) << 16) | ((ng as u32) << 8) | (nb as u32) | crate::gfx::UNLIT;
+    buf[idx] = out | crate::gfx::UNLIT;
 }
 
 /// Xiaolin-Wu anti-aliased line. `additive` selects the blend mode.
+///
+/// Only the part of the line over the buffer is walked: the run along the
+/// major axis is cut to the columns (rows, for steep lines) inside the buffer
+/// and to where the minor coordinate is within it — so a line projected far
+/// off-screen, or one crossing a thin raster strip, costs only its visible
+/// pixels. The walk is cut, not the endpoints, so the visible pixels are the
+/// same as drawing the whole line (no fake end caps at the cut).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_line_aa(
     buf: &mut [u32],
@@ -1151,6 +953,8 @@ pub fn draw_line_aa(
     let dx = x1 - x0;
     let dy = y1 - y0;
     let grad = if dx.abs() < 1e-6 { 1.0 } else { dy / dx };
+    // extent of the major / minor axis in buffer pixels
+    let (major, minor) = if steep { (h as i32, w as f32) } else { (w as i32, h as f32) };
 
     let plot = |buf: &mut [u32], a: i32, b: i32, c: f32| {
         if steep {
@@ -1161,7 +965,7 @@ pub fn draw_line_aa(
     };
 
     // endpoints
-    let mut inter_y = y0 + grad * (x0.round() - x0) + grad;
+    let inter0 = y0 + grad * (x0.round() - x0) + grad;
     let xend0 = x0.round();
     let xend1 = x1.round();
 
@@ -1170,13 +974,26 @@ pub fn draw_line_aa(
 
     let xpxl1 = xend0 as i32;
     let xpxl2 = xend1 as i32;
-    let mut x = xpxl1 + 1;
-    while x < xpxl2 {
-        let fy = inter_y.floor();
-        let frac = inter_y - fy;
+    let first = xpxl1.saturating_add(1);
+    let mut lo = first.max(-1);
+    let mut hi = xpxl2.saturating_sub(1).min(major);
+    // where the minor coordinate inter(x) = inter0 + grad·(x − first) is on the buffer
+    if grad.abs() > 1e-9 {
+        let xa = first as f32 + (-2.0 - inter0) / grad;
+        let xb = first as f32 + (minor + 1.0 - inter0) / grad;
+        lo = lo.max((xa.min(xb).floor() as i32).saturating_sub(1));
+        hi = hi.min((xa.max(xb).ceil() as i32).saturating_add(1));
+    } else if inter0 < -2.0 || inter0 > minor + 1.0 {
+        return;
+    }
+    let base = first as f32;
+    let mut x = lo;
+    while x <= hi {
+        let iy = inter0 + grad * (x as f32 - base);
+        let fy = iy.floor();
+        let frac = iy - fy;
         plot(buf, x, fy as i32, 1.0 - frac);
         plot(buf, x, fy as i32 + 1, frac);
-        inter_y += grad;
         x += 1;
     }
 }
@@ -1363,15 +1180,27 @@ pub fn fill_contours_aa(
     let mut cov = vec![0.0f32; row_w];
     let mut xs: Vec<(f32, i32)> = Vec::with_capacity(16);
 
+    // Active edge list: edges sorted by top y join when the scan reaches them
+    // and leave past their bottom, so each sub-scanline looks at the handful of
+    // edges crossing it instead of every edge of the path.
+    edges.sort_by(|a, b| a.y_lo.partial_cmp(&b.y_lo).unwrap_or(std::cmp::Ordering::Equal));
+    let mut next = 0usize;
+    let mut active: Vec<usize> = Vec::with_capacity(16);
     for py in y_start..y_end {
         for c in cov.iter_mut() {
             *c = 0.0;
         }
         for s in 0..SS {
             let sy = py as f32 + (s as f32 + 0.5) * sub_w;
+            while next < edges.len() && edges[next].y_lo <= sy {
+                active.push(next);
+                next += 1;
+            }
+            active.retain(|&i| sy < edges[i].y_hi);
             xs.clear();
-            for e in &edges {
-                if sy >= e.y_lo && sy < e.y_hi {
+            for &i in &active {
+                let e = &edges[i];
+                if sy >= e.y_lo {
                     xs.push((e.x_at_lo + (sy - e.y_lo) * e.dxdy, e.dir));
                 }
             }
@@ -1457,140 +1286,71 @@ pub fn depth_of_field(
 
     // The blurred image is built at HALF resolution (the blur is low-frequency,
     // so this is visually identical and ~4× cheaper), then sampled bilinearly
-    // during the full-res composite.
+    // during the full-res composite. R, G, B live interleaved in one plane taken
+    // from the per-thread scratch pool, so a frame allocates nothing (this used
+    // to be six fresh 0.5–2 MB planes per frame).
     let hw = width.div_ceil(2);
     let hh = height.div_ceil(2);
     let hn = hw * hh;
     let r_h = rad.div_ceil(2).max(1) as i32; // blur radius in half-res pixels
     let inv_win = 1.0 / (2 * r_h + 1) as f32;
-
-    // Downsample (2×2 average) into half-res f32 planes.
-    let mut rc = vec![0f32; hn];
-    let mut gc = vec![0f32; hn];
-    let mut bc = vec![0f32; hn];
-    {
-        let down_row = |hy: usize, rows: (&mut [f32], &mut [f32], &mut [f32])| {
-            let y0 = (hy * 2).min(height - 1);
-            let y1 = (hy * 2 + 1).min(height - 1);
-            for hx in 0..hw {
-                let x0 = (hx * 2).min(width - 1);
-                let x1 = (hx * 2 + 1).min(width - 1);
-                let (mut r, mut g, mut b) = (0f32, 0f32, 0f32);
-                for &i in &[
-                    y0 * width + x0,
-                    y0 * width + x1,
-                    y1 * width + x0,
-                    y1 * width + x1,
-                ] {
-                    let p = buf[i];
-                    r += ((p >> 16) & 0xFF) as f32;
-                    g += ((p >> 8) & 0xFF) as f32;
-                    b += (p & 0xFF) as f32;
-                }
-                rows.0[hx] = r * 0.25;
-                rows.1[hx] = g * 0.25;
-                rows.2[hx] = b * 0.25;
-            }
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use rayon::prelude::*;
-            rc.par_chunks_mut(hw)
-                .zip(gc.par_chunks_mut(hw))
-                .zip(bc.par_chunks_mut(hw))
-                .enumerate()
-                .for_each(|(hy, ((r, g), b))| down_row(hy, (r, g, b)));
-        }
-        #[cfg(target_arch = "wasm32")]
-        for (hy, ((r, g), b)) in rc
-            .chunks_mut(hw)
-            .zip(gc.chunks_mut(hw))
-            .zip(bc.chunks_mut(hw))
-            .enumerate()
-        {
-            down_row(hy, (r, g, b));
-        }
-    }
-
-    // Separable box blur on the half-res planes (H: sliding window; V: direct
-    // small-window sum — both row-parallel on native).
     let hwi = hw as i32;
-    let blur = |src: &[f32]| -> Vec<f32> {
-        let mut tmp = vec![0f32; hn];
-        let hpass = |y: usize, out_row: &mut [f32]| {
-            let row = y * hw;
+    let row3 = 3 * hw;
+
+    let mut s = crate::gfx::scratch::take_f32(3 * hn);
+    let mut tmp = crate::gfx::scratch::take_f32(3 * hn);
+
+    // Downsample (2×2 average).
+    let down_row = |hy: usize, row: &mut [f32]| {
+        let y0 = (hy * 2).min(height - 1);
+        let y1 = (hy * 2 + 1).min(height - 1);
+        for hx in 0..hw {
+            let x0 = (hx * 2).min(width - 1);
+            let x1 = (hx * 2 + 1).min(width - 1);
+            let (mut r, mut g, mut b) = (0f32, 0f32, 0f32);
+            for &i in &[y0 * width + x0, y0 * width + x1, y1 * width + x0, y1 * width + x1] {
+                let p = buf[i];
+                r += ((p >> 16) & 0xFF) as f32;
+                g += ((p >> 8) & 0xFF) as f32;
+                b += (p & 0xFF) as f32;
+            }
+            row[3 * hx] = r * 0.25;
+            row[3 * hx + 1] = g * 0.25;
+            row[3 * hx + 2] = b * 0.25;
+        }
+    };
+    // Separable box blur. H: sliding window per row; V: sum of the 2r+1 rows
+    // above/below, read row-major.
+    let hpass = |src: &[f32], y: usize, out: &mut [f32]| {
+        let row = &src[y * row3..(y + 1) * row3];
+        for c in 0..3 {
             let mut acc = 0.0f32;
             let mut k = -r_h;
             while k <= r_h {
-                acc += src[row + k.clamp(0, hwi - 1) as usize];
+                acc += row[3 * k.clamp(0, hwi - 1) as usize + c];
                 k += 1;
             }
-            for (x, out) in out_row.iter_mut().enumerate() {
-                *out = acc * inv_win;
+            for x in 0..hw {
+                out[3 * x + c] = acc * inv_win;
                 let lo = (x as i32 - r_h).clamp(0, hwi - 1) as usize;
                 let hi2 = (x as i32 + r_h + 1).clamp(0, hwi - 1) as usize;
-                acc += src[row + hi2] - src[row + lo];
+                acc += row[3 * hi2 + c] - row[3 * lo + c];
             }
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use rayon::prelude::*;
-            tmp.par_chunks_mut(hw)
-                .enumerate()
-                .for_each(|(y, row)| hpass(y, row));
         }
-        #[cfg(target_arch = "wasm32")]
-        for (y, row) in tmp.chunks_mut(hw).enumerate() {
-            hpass(y, row);
-        }
-
-        let mut out = vec![0f32; hn];
-        let vpass = |y: usize, out_row: &mut [f32]| {
-            for (x, o) in out_row.iter_mut().enumerate() {
-                let mut acc = 0.0f32;
-                let mut k = -r_h;
-                while k <= r_h {
-                    let yy = (y as i32 + k).clamp(0, hh as i32 - 1) as usize;
-                    acc += tmp[yy * hw + x];
-                    k += 1;
-                }
-                *o = acc * inv_win;
-            }
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use rayon::prelude::*;
-            out.par_chunks_mut(hw)
-                .enumerate()
-                .for_each(|(y, row)| vpass(y, row));
-        }
-        #[cfg(target_arch = "wasm32")]
-        for (y, row) in out.chunks_mut(hw).enumerate() {
-            vpass(y, row);
-        }
-        out
     };
-
-    let rb = blur(&rc);
-    let gb = blur(&gc);
-    let bb = blur(&bc);
-    drop(rc);
-    drop(gc);
-    drop(bc);
-
-    // Bilinear sample of a half-res plane at full-res pixel coords.
-    let samp = |s: &[f32], fx: f32, fy: f32| -> f32 {
-        let gx = (fx * 0.5).min(hw as f32 - 1.0).max(0.0);
-        let gy = (fy * 0.5).min(hh as f32 - 1.0).max(0.0);
-        let x0 = gx as usize;
-        let y0 = gy as usize;
-        let x1 = (x0 + 1).min(hw - 1);
-        let y1 = (y0 + 1).min(hh - 1);
-        let tx = gx - x0 as f32;
-        let ty = gy - y0 as f32;
-        let a = s[y0 * hw + x0] * (1.0 - tx) + s[y0 * hw + x1] * tx;
-        let b = s[y1 * hw + x0] * (1.0 - tx) + s[y1 * hw + x1] * tx;
-        a * (1.0 - ty) + b * ty
+    let vpass = |src: &[f32], y: usize, out: &mut [f32]| {
+        out.fill(0.0);
+        let mut k = -r_h;
+        while k <= r_h {
+            let yy = (y as i32 + k).clamp(0, hh as i32 - 1) as usize;
+            for (o, v) in out.iter_mut().zip(&src[yy * row3..(yy + 1) * row3]) {
+                *o += *v;
+            }
+            k += 1;
+        }
+        for o in out.iter_mut() {
+            *o *= inv_win;
+        }
     };
 
     // Composite: lerp sharp→blurred by circle-of-confusion, preserving any
@@ -1599,20 +1359,46 @@ pub fn depth_of_field(
     // blurred planes are sampled with opposite horizontal offsets (iridescent
     // chroma fringe) and the hue is swirled slightly — water / heat haze /
     // far-field shimmer.
-    let comp_row = |y: usize, row: &mut [u32]| {
+    // per-column (left index, right index, weight) of the half-res plane
+    let cols: Vec<(u32, u32, f32)> = (0..width)
+        .map(|x| {
+            let gx = (x as f32 * 0.5).min(hw as f32 - 1.0).max(0.0);
+            let x0 = gx as usize;
+            ((3 * x0) as u32, (3 * (x0 + 1).min(hw - 1)) as u32, gx - x0 as f32)
+        })
+        .collect();
+    let comp_row = |s: &[f32], y: usize, row: &mut [u32], rowv: &mut Vec<f32>| {
+        {
+            let gy = (y as f32 * 0.5).min(hh as f32 - 1.0).max(0.0);
+            let y0 = gy as usize;
+            let y1 = (y0 + 1).min(hh - 1);
+            let ty = gy - y0 as f32;
+            rowv.clear();
+            rowv.extend(s[y0 * row3..(y0 + 1) * row3].iter().zip(&s[y1 * row3..(y1 + 1) * row3]).map(|(a, b)| a * (1.0 - ty) + b * ty));
+        }
+        // Bilinear sample of channel `c` of the half-res plane at full-res coords.
+        let samp = |c: usize, fx: f32, fy: f32| -> f32 {
+            let gx = (fx * 0.5).min(hw as f32 - 1.0).max(0.0);
+            let gy = (fy * 0.5).min(hh as f32 - 1.0).max(0.0);
+            let x0 = gx as usize;
+            let y0 = gy as usize;
+            let x1 = (x0 + 1).min(hw - 1);
+            let y1 = (y0 + 1).min(hh - 1);
+            let tx = gx - x0 as f32;
+            let ty = gy - y0 as f32;
+            let a = s[y0 * row3 + 3 * x0 + c] * (1.0 - tx) + s[y0 * row3 + 3 * x1 + c] * tx;
+            let b = s[y1 * row3 + 3 * x0 + c] * (1.0 - tx) + s[y1 * row3 + 3 * x1 + c] * tx;
+            a * (1.0 - ty) + b * ty
+        };
         let fy = y as f32;
         for (x, px) in row.iter_mut().enumerate() {
             let i = y * width + x;
             let z = zbuf[i];
-            let coc = if z.is_finite() {
-                ((z - focus).abs() / range).clamp(0.0, 1.0)
-            } else {
-                1.0
-            };
+            let coc = if z.is_finite() { ((z - focus).abs() / range).clamp(0.0, 1.0) } else { 1.0 };
             if coc <= 0.003 {
                 continue; // in focus — untouched
             }
-            let s = 1.0 - coc;
+            let sh = 1.0 - coc;
             let p = *px;
             let tag = p & !crate::gfx::RGB_MASK;
             let pr = ((p >> 16) & 0xFF) as f32;
@@ -1622,9 +1408,9 @@ pub fn depth_of_field(
             let (mut r, mut g, mut b);
             if oil > 0.0 {
                 let off = coc * oil * 3.0;
-                r = pr * s + samp(&rb, fx - off, fy) * coc;
-                g = pg * s + samp(&gb, fx, fy) * coc;
-                b = pb * s + samp(&bb, fx + off, fy) * coc;
+                r = pr * sh + samp(0, fx - off, fy) * coc;
+                g = pg * sh + samp(1, fx, fy) * coc;
+                b = pb * sh + samp(2, fx + off, fy) * coc;
                 // gentle hue swirl toward an iridescent film
                 let k = oil * coc * 0.22;
                 let (r0, g0, b0) = (r, g, b);
@@ -1632,9 +1418,12 @@ pub fn depth_of_field(
                 g = g0 * (1.0 - k) + r0 * k;
                 b = b0 * (1.0 - k) + g0 * k;
             } else {
-                r = pr * s + samp(&rb, fx, fy) * coc;
-                g = pg * s + samp(&gb, fx, fy) * coc;
-                b = pb * s + samp(&bb, fx, fy) * coc;
+                // separable bilinear: the row was lerped vertically once above
+                let (i0, i1, tx) = cols[x];
+                let (i0, i1) = (i0 as usize, i1 as usize);
+                r = pr * sh + (rowv[i0] * (1.0 - tx) + rowv[i1] * tx) * coc;
+                g = pg * sh + (rowv[i0 + 1] * (1.0 - tx) + rowv[i1 + 1] * tx) * coc;
+                b = pb * sh + (rowv[i0 + 2] * (1.0 - tx) + rowv[i1 + 2] * tx) * coc;
             }
             let r = r.round().clamp(0.0, 255.0) as u32;
             let g = g.round().clamp(0.0, 255.0) as u32;
@@ -1642,18 +1431,31 @@ pub fn depth_of_field(
             *px = (r << 16) | (g << 8) | b | tag;
         }
     };
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
+        s.par_chunks_mut(row3).enumerate().for_each(|(y, r)| down_row(y, r));
+        tmp.par_chunks_mut(row3).enumerate().for_each(|(y, r)| hpass(&s, y, r));
+        s.par_chunks_mut(row3).enumerate().for_each(|(y, r)| vpass(&tmp, y, r));
+        let sr = &s;
         buf[..n]
             .par_chunks_mut(width)
             .enumerate()
-            .for_each(|(y, row)| comp_row(y, row));
+            .for_each_init(|| Vec::with_capacity(row3), |rowv, (y, row)| comp_row(sr, y, row, rowv));
     }
     #[cfg(target_arch = "wasm32")]
-    for (y, row) in buf[..n].chunks_mut(width).enumerate() {
-        comp_row(y, row);
+    {
+        s.chunks_mut(row3).enumerate().for_each(|(y, r)| down_row(y, r));
+        tmp.chunks_mut(row3).enumerate().for_each(|(y, r)| hpass(&s, y, r));
+        s.chunks_mut(row3).enumerate().for_each(|(y, r)| vpass(&tmp, y, r));
+        let mut rowv = Vec::with_capacity(row3);
+        for (y, row) in buf[..n].chunks_mut(width).enumerate() {
+            comp_row(&s, y, row, &mut rowv);
+        }
     }
+    crate::gfx::scratch::put_f32(s);
+    crate::gfx::scratch::put_f32(tmp);
 }
 
 #[cfg(test)]
@@ -2143,7 +1945,7 @@ pub fn set_persp_zd(zd: f32) {
     PERSP_ZD.store(zd.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 #[inline]
-fn persp_zd() -> f32 {
+pub(crate) fn persp_zd() -> f32 {
     f32::from_bits(PERSP_ZD.load(std::sync::atomic::Ordering::Relaxed))
 }
 /// Per-vertex 1/w for the perspective depth, or None (fall back to linear) when
@@ -2181,30 +1983,39 @@ fn tex_fetch(t: &crate::gfx::depth::TexData, x: i32, y: i32) -> u32 {
 }
 
 /// Bilinear, wrapping texel fetch at texture coordinates (u, v) in texels.
+/// 8-bit fixed-point weights; the four channels blend two-at-a-time in packed
+/// 16-bit lanes (RB / AG) instead of 16 float lerps through a loop.
 #[inline]
 fn tex_bilinear(t: &crate::gfx::depth::TexData, u: f32, v: f32) -> [f32; 4] {
     let u = u - 0.5;
     let v = v - 0.5;
     let x0 = u.floor();
     let y0 = v.floor();
-    let fx = u - x0;
-    let fy = v - y0;
+    let fx = ((u - x0) * 256.0) as u32;
+    let fy = ((v - y0) * 256.0) as u32;
+    let xm = (t.w - 1) as i32;
+    let ym = (t.h - 1) as i32;
     let (xi, yi) = (x0 as i32, y0 as i32);
-    let c00 = tex_fetch(t, xi, yi);
-    let c10 = tex_fetch(t, xi + 1, yi);
-    let c01 = tex_fetch(t, xi, yi + 1);
-    let c11 = tex_fetch(t, xi + 1, yi + 1);
-    let mut out = [0.0f32; 4];
-    for (k, sh) in [16u32, 8, 0, 24].iter().enumerate() {
-        let a = ((c00 >> sh) & 255) as f32;
-        let b = ((c10 >> sh) & 255) as f32;
-        let c = ((c01 >> sh) & 255) as f32;
-        let d = ((c11 >> sh) & 255) as f32;
-        let top = a + (b - a) * fx;
-        let bot = c + (d - c) * fx;
-        out[k] = top + (bot - top) * fy;
+    let xa = (xi & xm) as usize;
+    let xb = ((xi + 1) & xm) as usize;
+    let ra = ((yi & ym) as u32 * t.w) as usize;
+    let rb = (((yi + 1) & ym) as u32 * t.w) as usize;
+    let c00 = t.px[ra + xa];
+    let c10 = t.px[ra + xb];
+    let c01 = t.px[rb + xa];
+    let c11 = t.px[rb + xb];
+    const M: u32 = 0x00FF_00FF;
+    #[inline(always)]
+    fn lerp2(a: u32, b: u32, f: u32) -> u32 {
+        ((a * (256 - f) + b * f) >> 8) & M
     }
-    out
+    let rb_top = lerp2(c00 & M, c10 & M, fx);
+    let rb_bot = lerp2(c01 & M, c11 & M, fx);
+    let ag_top = lerp2((c00 >> 8) & M, (c10 >> 8) & M, fx);
+    let ag_bot = lerp2((c01 >> 8) & M, (c11 >> 8) & M, fx);
+    let rbv = lerp2(rb_top, rb_bot, fy);
+    let agv = lerp2(ag_top, ag_bot, fy);
+    [((rbv >> 16) & 255) as f32, (agv & 255) as f32, (rbv & 255) as f32, ((agv >> 16) & 255) as f32]
 }
 
 /// Perspective-correct textured triangle with optional z-test / z-write, pen
@@ -2234,6 +2045,26 @@ pub fn fill_triangle_tex(
 /// perspective-correct world position) and distance fog.
 #[allow(clippy::too_many_arguments)]
 pub fn fill_triangle_tex_shaded(
+    buf: &mut [u32],
+    zbuf: Option<&mut [f32]>,
+    width: usize,
+    height: usize,
+    ysh: f32,
+    v: &[crate::gfx::depth::TexVert; 3],
+    tex: &crate::gfx::depth::TexData,
+    tint: u32,
+    hole: [f32; 4],
+    zwrite: bool,
+    mode: u8,
+    alpha: f32,
+    shade: Option<&crate::gfx::depth::TexShade>,
+) {
+    fill_triangle_tex_shaded_mode::<Z_LT>(buf, zbuf, width, height, ysh, v, tex, tint, hole, zwrite, mode, alpha, shade)
+}
+
+/// [`fill_triangle_tex_shaded`] in depth mode `M` (see [`Z_LE`]).
+#[allow(clippy::too_many_arguments)]
+pub fn fill_triangle_tex_shaded_mode<const M: u8>(
     buf: &mut [u32],
     mut zbuf: Option<&mut [f32]>,
     width: usize,
@@ -2301,15 +2132,45 @@ pub fn fill_triangle_tex_shaded(
     let persp_ok = zd.is_finite() && v[0].z + zd > 0.0;
     // equal 1/w on every vertex (sprites, billboards): affine, no per-pixel divide
     let affine = (v[0].iw - v[1].iw).abs() < 1e-9 && (v[0].iw - v[2].iw).abs() < 1e-9;
+    let sgn = if tot0 > 0.0 { 1.0f32 } else { -1.0 };
+    let de = [de0 * sgn, de1 * sgn, de2 * sgn];
+    let ripples_on = shade.map(|s| !s.ripples.is_empty()).unwrap_or(false);
     for py in min_y..=max_y {
         let fy = py as f32 + 0.5;
         let fx0 = min_x as f32 + 0.5;
         let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
         let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
         let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
+        // analytic span of this row: solve each edge function >= 0 (in the winding's
+        // sign) for the pixel offset, widen by a pixel, and keep the exact per-pixel
+        // inside test below, so coverage is unchanged while the empty bbox corners of
+        // long thin triangles are skipped
+        let mut lo = 0i32;
+        let mut hi = max_x - min_x;
+        let mut empty = false;
+        for (ev, d) in [(e0, de[0]), (e1, de[1]), (e2, de[2])] {
+            let a = ev * sgn;
+            if d.abs() < 1e-12 {
+                if a < 0.0 { empty = true; }
+            } else {
+                let t = -a / d;
+                if d > 0.0 {
+                    lo = lo.max((t.floor() as i32).saturating_sub(1));
+                } else {
+                    hi = hi.min((t.ceil() as i32).saturating_add(1));
+                }
+            }
+        }
+        if empty || lo > hi {
+            continue;
+        }
+        let lof = lo as f32;
+        e0 += de0 * lof;
+        e1 += de1 * lof;
+        e2 += de2 * lof;
         let row = py as usize * width;
         let mut in_span = false;
-        for px in min_x..=max_x {
+        for px in (min_x + lo)..=(min_x + hi) {
             let inside = (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
             if inside {
                 in_span = true;
@@ -2318,21 +2179,31 @@ pub fn fill_triangle_tex_shaded(
                     let w0 = e1 * inv_tot;
                     let w1 = e2 * inv_tot;
                     let iw = if affine { v[0].iw } else { v[0].iw * w0 + v[1].iw * w1 + v[2].iw * w2 };
+                    // one reciprocal serves both the depth and the perspective-correct uv
+                    let rcp = if iw > 1e-12 { 1.0 / iw } else { 0.0 };
                     let z = if affine {
                         v[0].z
                     } else if persp_ok && iw > 1e-12 {
-                        1.0 / iw - zd
+                        rcp - zd
                     } else {
                         v[0].z * w0 + v[1].z * w1 + v[2].z * w2
                     };
                     let idx = row + px as usize;
                     let pass = match zbuf.as_deref() {
-                        Some(zb) => z < zb[idx],
+                        Some(zb) => z_pass::<M>(z, zb[idx]),
                         None => true,
                     };
-                    if pass {
+                    if M == Z_PREPASS {
+                        // only called for opaque, non-holed, z-writing calls: every
+                        // covered pixel with a valid 1/w writes its depth
+                        if pass && iw > 1e-12 {
+                            if let Some(zb) = zbuf.as_deref_mut() {
+                                zb[idx] = z;
+                            }
+                        }
+                    } else if pass {
                         if iw > 1e-12 {
-                            let inv = if affine { 1.0 / v[0].iw } else { 1.0 / iw };
+                            let inv = rcp;
                             let mut u = (v[0].uw * w0 + v[1].uw * w1 + v[2].uw * w2) * inv;
                             let mut vv = (v[0].vw * w0 + v[1].vw * w1 + v[2].vw * w2) * inv;
                             // shockwave rings: the wave height h = env * sin(phase) is never
@@ -2340,7 +2211,8 @@ pub fn fill_triangle_tex_shaded(
                             // light through a rippling surface, lights one flank and darkens the
                             // other, and the crests catch a soft highlight
                             let (mut bump, mut glint) = (1.0f32, 0.0f32);
-                            if let Some(rp) = shade.map(|s| &s.ripples).filter(|r| !r.is_empty()) {
+                            if ripples_on {
+                                let rp = &shade.unwrap().ripples;
                                 let wx = (v[0].wx * w0 + v[1].wx * w1 + v[2].wx * w2) * inv;
                                 let wz = (v[0].wz * w0 + v[1].wz * w1 + v[2].wz * w2) * inv;
                                 let (mut gu, mut gv, mut sl) = (0.0f32, 0.0f32, 0.0f32);

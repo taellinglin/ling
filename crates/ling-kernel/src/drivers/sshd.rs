@@ -20,12 +20,11 @@
 //! installer or the first-boot prompt) -- see `start`; also runnable manually
 //! via the rescue `sshd` command.
 //!
-//! Honest scope (v0.1), disclosed not hidden:
-//! - **One connection at a time** (the shared `netstack` CONN): an active SSH
-//!   session holds the single network connection, so the desktop's own net
-//!   (browser/messenger) is blocked while someone is logged in. The desktop
-//!   still renders (the session yields during reads); it just can't also use
-//!   the network. Multi-socket support is future work.
+//! Honest scope, disclosed not hidden:
+//! - **One SSH session at a time**: the background task serves one client to
+//!   completion, then accepts the next. The session runs on its own socket of
+//!   the multi-socket netstack, so the desktop's other network users (browser,
+//!   Messenger) keep working while someone is logged in.
 //! - The shell is a small built-in command set (help/echo/whoami/uname/uptime/
 //!   exit), not yet the full `lsh` (whose console I/O would need redirecting
 //!   onto the channel). The point reached is a *real* encrypted, authenticated,
@@ -40,8 +39,138 @@ use chacha20::ChaCha20Legacy;
 use poly1305::universal_hash::{KeyInit, UniversalHash};
 use poly1305::Poly1305;
 
-pub const SSH_PORT: u16 = 22;
+pub const DEFAULT_PORT: u16 = 22;
 const IDENT: &[u8] = b"SSH-2.0-LingOS_0.1";
+
+// 0 = not read yet. On the Pi the port is `ssh_port` in setup.conf (the setup
+// wizard's "SSH port" field, Settings, `ssh-serve port <n>`); it is only
+// latched once the card's filesystem is mounted, so an early call can't pin 22.
+static mut PORT: u16 = 0;
+
+/// The TCP port the server listens on.
+pub fn port() -> u16 {
+    unsafe {
+        if PORT != 0 {
+            return PORT;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    if crate::fs::lingfs::is_mounted() {
+        let p = crate::setup::saved("ssh_port").parse::<u16>().ok().filter(|&p| p != 0).unwrap_or(DEFAULT_PORT);
+        unsafe { PORT = p };
+        return p;
+    }
+    DEFAULT_PORT
+}
+
+/// Change the listening port (1..=65535): persisted on the Pi, and the live
+/// listener is moved to it. Connections already accepted stay up.
+pub fn set_port(p: u16) -> bool {
+    if p == 0 {
+        return false;
+    }
+    let old = port();
+    unsafe { PORT = p };
+    #[cfg(target_arch = "aarch64")]
+    let saved = crate::setup::set_saved("ssh_port", &alloc::format!("{p}"));
+    #[cfg(not(target_arch = "aarch64"))]
+    let saved = true;
+    if old != p {
+        netstack::tcp_unlisten(old);
+    }
+    saved
+}
+
+/// Settings > Sign-in "2FA over SSH": whether an account that has two-factor sign-in on must also
+/// give its code to log in over SSH / SFTP / scp (they share one login). On unless switched off.
+/// Off means the password alone opens SSH for that account -- weaker, and the desktop says so.
+pub fn twofa_required() -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::setup::saved("ssh_2fa") != "0"
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        true
+    }
+}
+
+pub fn set_twofa_required(on: bool) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::setup::set_saved("ssh_2fa", if on { "1" } else { "0" })
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = on;
+        false
+    }
+}
+
+/// The password step of a password-method login. A two-factor account types its password with the
+/// 6-digit code right after it ("hunter2123456", for scripts and clients with no prompt); with the
+/// setting off the password alone is enough.
+fn password_login(uname: &str, secret: &str) -> bool {
+    if twofa_required() {
+        users::verify_login(uname, secret)
+    } else {
+        users::verify(uname, secret) || users::verify_login(uname, secret)
+    }
+}
+
+/// One keyboard-interactive round (RFC 4256): show `prompt` (no echo) and return what the client typed.
+fn kbdint_ask(sess: &mut Session, name: &str, instruction: &str, prompt: &str) -> Option<String> {
+    let mut m = Vec::new();
+    m.push(MSG_USERAUTH_INFO_REQUEST);
+    put_string(&mut m, name.as_bytes());
+    put_string(&mut m, instruction.as_bytes());
+    put_string(&mut m, b"");
+    put_u32(&mut m, 1);
+    put_string(&mut m, prompt.as_bytes());
+    m.push(0); // echo: false
+    if !sess.send(&m) {
+        return None;
+    }
+    loop {
+        let msg = sess.recv()?;
+        match msg.first().copied() {
+            Some(MSG_USERAUTH_INFO_RESPONSE) => {
+                let mut p = 1usize;
+                let n = u32::from_be_bytes([*msg.get(p)?, *msg.get(p + 1)?, *msg.get(p + 2)?, *msg.get(p + 3)?]);
+                p += 4;
+                if n != 1 {
+                    return None;
+                }
+                let r = get_string(&msg, &mut p)?;
+                return Some(String::from_utf8_lossy(r).into_owned());
+            },
+            Some(MSG_IGNORE) | Some(MSG_DEBUG) => {},
+            _ => return None,
+        }
+    }
+}
+
+/// keyboard-interactive login: the password, then -- for an account with two-factor sign-in on, when
+/// the setting asks for it -- "Verification code:". The code is asked for whether or not the password
+/// was right, so a wrong password can't be told apart from a wrong code.
+fn kbdint_login(sess: &mut Session, uname: &str) -> bool {
+    let Some(pw) = kbdint_ask(sess, "", "", "Password: ") else { return false };
+    let pw_ok = !pw.is_empty() && users::verify(uname, &pw);
+    let needs_code = twofa_required() && crate::fs::twofa::enabled(uname);
+    if !needs_code {
+        // no second factor to ask for (none set up, or the setting is off): the password decides
+        return pw_ok;
+    }
+    let wait = crate::fs::twofa::locked_for_ms(uname);
+    if wait > 0 {
+        log(b"sshd: two-factor codes are refused for a while after too many wrong ones\n");
+    }
+    let Some(code) = kbdint_ask(sess, "Two-factor authentication", "Enter the 6-digit code from your authenticator app (or a recovery code).", "Verification code: ") else {
+        return false;
+    };
+    let code_ok = crate::fs::twofa::check(uname, code.trim());
+    pw_ok && code_ok
+}
 
 // SSH message numbers (RFC 4253/4252/4254).
 const MSG_DISCONNECT: u8 = 1;
@@ -57,6 +186,8 @@ const MSG_KEX_ECDH_REPLY: u8 = 31;
 const MSG_USERAUTH_REQUEST: u8 = 50;
 const MSG_USERAUTH_FAILURE: u8 = 51;
 const MSG_USERAUTH_SUCCESS: u8 = 52;
+const MSG_USERAUTH_INFO_REQUEST: u8 = 60;
+const MSG_USERAUTH_INFO_RESPONSE: u8 = 61;
 const MSG_GLOBAL_REQUEST: u8 = 80;
 const MSG_REQUEST_FAILURE: u8 = 82;
 const MSG_CHANNEL_OPEN: u8 = 90;
@@ -125,19 +256,29 @@ fn host_key_blob(pk: &[u8; 32]) -> Vec<u8> {
 
 /// Persisted 32-byte Ed25519 host-key seed (stable across boots so the client
 /// fingerprint doesn't change). Generated from RDRAND on first use.
-fn host_seed() -> [u8; 32] {
+/// The host key's home. Absolute: a bare name resolves against the console's
+/// current directory (`lingfs::resolve`), which would make the key -- and so the
+/// fingerprint every client has pinned -- depend on where someone last `cd`'d.
+const HOST_SEED_PATH: &str = "/ssh_host_seed";
+
+/// The persisted ed25519 host-key seed, generated once. `None` when there is no
+/// stored seed and no hardware randomness to make one: never fall back to a
+/// zero or otherwise predictable key, which would let anyone impersonate us.
+fn host_seed() -> Option<[u8; 32]> {
     let mut buf = [0u8; 64];
-    if let Ok(Some(n)) = lingfs::read_file_all("ssh_host_seed", &mut buf) {
+    if let Ok(Some(n)) = lingfs::read_file_all(HOST_SEED_PATH, &mut buf) {
         if n >= 32 {
             let mut s = [0u8; 32];
             s.copy_from_slice(&buf[..32]);
-            return s;
+            return Some(s);
         }
     }
     let mut s = [0u8; 32];
-    crate::crypto::random_bytes(&mut s);
-    let _ = lingfs::write_file("ssh_host_seed", &s);
-    s
+    if !crate::crypto::random_bytes(&mut s) {
+        return None;
+    }
+    let _ = lingfs::write_file(HOST_SEED_PATH, &s);
+    Some(s)
 }
 
 // ── chacha20-poly1305@openssh.com ────────────────────────────────────────────
@@ -407,7 +548,7 @@ fn read_version(sess: &mut Session) -> Option<Vec<u8>> {
 /// Serve one inbound SSH connection to completion (up to `budget_us` for the
 /// accept). Returns Ok(()) on a clean session, or an error string.
 pub fn serve(budget_us: u64) -> Result<(), &'static str> {
-    let handle = netstack::tcp_listen_accept(SSH_PORT, budget_us).ok_or("no client connected")?;
+    let handle = netstack::tcp_listen_accept(port(), budget_us).ok_or("no client connected")?;
     log(b"sshd: client connected -- starting SSH transport\n");
 
     let mut sess = Session::new(handle);
@@ -478,7 +619,11 @@ pub fn serve(budget_us: u64) -> Result<(), &'static str> {
     let k = crate::crypto::x25519(eph_secret, q_c_arr);
 
     // Host key + exchange hash H.
-    let seed = host_seed();
+    let Some(seed) = host_seed() else {
+        log(b"sshd: no host key and no random source to make one\n");
+        netstack::tcp_close_h(handle);
+        return Err("no host key");
+    };
     let host_pub = crate::ed25519::public_from_seed(&seed);
     let k_s = host_key_blob(&host_pub);
     let mut hbuf = Vec::new();
@@ -558,11 +703,23 @@ pub fn serve(budget_us: u64) -> Result<(), &'static str> {
                 let _service = get_string(&msg, &mut p);
                 let method = get_string(&msg, &mut p).unwrap_or(b"").to_vec();
                 let uname = core::str::from_utf8(&user).unwrap_or("");
-                if method == b"password" {
+                if method == b"keyboard-interactive" {
+                    // the password, then the authenticator code: asked as separate prompts, so
+                    // ssh / sftp / scp / WinSCP / FileZilla all show a normal "Verification code:" box
+                    if kbdint_login(&mut sess, uname) {
+                        username = uname.to_string();
+                        sess.authed = true;
+                        sess.send(&[MSG_USERAUTH_SUCCESS]);
+                        log(b"sshd: keyboard-interactive auth OK for ");
+                        log(&user);
+                        log(b"\n");
+                        break;
+                    }
+                } else if method == b"password" {
                     let mut pp = p + 1; // skip the boolean FALSE
                     let pw = get_string(&msg, &mut pp).unwrap_or(b"");
                     let pws = core::str::from_utf8(pw).unwrap_or("");
-                    if !pws.is_empty() && users::verify(uname, pws) {
+                    if !pws.is_empty() && password_login(uname, pws) {
                         username = uname.to_string();
                         sess.authed = true;
                         sess.send(&[MSG_USERAUTH_SUCCESS]);
@@ -575,7 +732,7 @@ pub fn serve(budget_us: u64) -> Result<(), &'static str> {
                 attempts += 1;
                 let mut r = Vec::new();
                 r.push(MSG_USERAUTH_FAILURE);
-                put_string(&mut r, b"password");
+                put_string(&mut r, b"keyboard-interactive,password");
                 r.push(0); // partial success = false
                 sess.send(&r);
                 if attempts >= 6 {
@@ -691,6 +848,11 @@ fn run_channel(sess: &mut Session, username: &str) {
                         channel_write(sess, peer_chan, b"\r\n  LingOS SSH -- welcome, ");
                         channel_write(sess, peer_chan, username.as_bytes());
                         channel_write(sess, peer_chan, b"\r\n  type 'help' for commands\r\n");
+                        // the message of the day (motd set <file> / motd clear)
+                        if let Some(m) = crate::motd::get() {
+                            channel_write(sess, peer_chan, b"\r\n");
+                            channel_write_text(sess, peer_chan, &m);
+                        }
                         send_prompt(sess, peer_chan, &cwd);
                     },
                     b"exec" => {
@@ -911,6 +1073,11 @@ fn run_cmd(sess: &mut Session, chan: u32, cmd: &str, username: &str, cwd: &mut S
         Some(i) => (&cmd[..i], cmd[i + 1..].trim()),
         None => (cmd, ""),
     };
+    // files, machine info, desktop control, motd (sshcmds.rs); the rest below and the Pi console
+    if let Some(out) = crate::drivers::sshcmds::run(name, arg, username, cwd) {
+        channel_write_text(sess, chan, out.as_bytes());
+        return false;
+    }
     match name {
         "exit" | "logout" | "quit" => {
             channel_write(sess, chan, b"bye\r\n");
@@ -1056,6 +1223,13 @@ fn run_cmd(sess: &mut Session, chan: u32, cmd: &str, username: &str, cwd: &mut S
                 channel_write(sess, chan, s.as_bytes());
             }
         },
+        #[cfg(target_arch = "x86_64")]
+        "nic" => {
+            crate::drivers::netdev::ensure_init();
+            let mut s = crate::drivers::netdev::status_line();
+            s.push_str("\r\n");
+            channel_write(sess, chan, s.as_bytes());
+        },
         "net" => {
             // Concurrency probe: open a CLIENT TCP connection (a separate
             // netstack socket) while this SSH server session is live. With the
@@ -1116,7 +1290,7 @@ pub fn set_enabled(on: bool) {
     if on {
         start();
     } else {
-        netstack::tcp_unlisten(SSH_PORT);
+        netstack::tcp_unlisten(port());
     }
 }
 
@@ -1137,10 +1311,10 @@ extern "C" fn sshd_task() {
         // 400ms accept window per idle iteration; a real SYN completes the
         // handshake + session inside this call. Errors (incl. "no client") are
         // silent here -- only a real connection logs (see `serve`).
+        // (switched off: just pass the CPU on -- a 2 ms busy wait here cost
+        // the desktop 2 ms of every frame)
         if unsafe { SSHD_ENABLED } {
             let _ = serve(400_000);
-        } else {
-            crate::arch::timer::delay_us(2_000);
         }
         crate::proc::sched::yield_now();
     }
@@ -1155,10 +1329,17 @@ pub fn start() {
         if SSHD_STARTED {
             return;
         }
-        SSHD_STARTED = true;
     }
-    crate::console_write(b"sshd: SSH server enabled -- listening on port 22\n");
-    crate::proc::sched::spawn(sshd_task as *const () as usize as u64);
+    // The scheduler has a handful of fixed task slots. Claim one *before*
+    // calling ourselves started: a full table used to leave `enabled()` true
+    // (Settings said "running", the boot log said "listening") with no task
+    // behind it, so port 22 stayed shut.
+    if crate::proc::sched::spawn(sshd_task as *const () as usize as u64) == u64::MAX {
+        crate::console_write(b"sshd: no free task slot -- SSH server NOT started\n");
+        return;
+    }
+    unsafe { SSHD_STARTED = true };
+    crate::console_write(alloc::format!("sshd: SSH server enabled -- listening on port {}\n", port()).as_bytes());
 }
 
 fn push_u64(s: &mut String, mut v: u64) {

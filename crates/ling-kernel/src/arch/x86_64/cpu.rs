@@ -96,6 +96,11 @@ pub unsafe fn read_flags() -> u64 {
     val
 }
 
+/// Are interrupts enabled (RFLAGS.IF)? False inside an interrupt handler.
+pub fn irqs_enabled() -> bool {
+    unsafe { read_flags() & (1 << 9) != 0 }
+}
+
 /// True if the CPU advertises RDRAND (CPUID.01H:ECX[30]). QEMU exposes it on
 /// its default CPU models; real hardware since Ivy Bridge / Excavator.
 pub unsafe fn has_rdrand() -> bool {

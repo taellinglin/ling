@@ -1,0 +1,11 @@
+# `cargo native` builds ling tuned for the machine it runs on (AVX2/FMA, and
+# AVX-512 on CPUs like the i9-11900K). The default build stays portable x86-64
+# so released binaries run anywhere; use this one for a machine's own copy.
+# It matters most for LLM work: candle's quantized (GGUF) kernels pick their
+# AVX2 paths at compile time (`#[cfg(target_feature = "avx2")]`), so a
+# portable build runs them scalar. The JIT (cranelift_native) already uses the
+# host's features either way.
+#   cargo native                      # release build of the workspace default
+#   cargo native -p ling --features ...
+[alias]
+native = ["build", "--release", "--config", "build.rustflags=['-C', 'target-cpu=native']"]

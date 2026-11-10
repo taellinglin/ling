@@ -1,49 +1,52 @@
-# Hyperbolic World — an H²×ℝ block walker
+# Hyperbolic World (H²×ℝ)
 
-`examples/physics/hyperbolic_world.ling` is a tiny game world inspired by
-[Hypermine](https://github.com/Ralith/hypermine). Hypermine is set in **H³**
-(fully 3-D hyperbolic space); this demo uses the simplest playable cousin,
-**H²×ℝ**: you walk on the **hyperbolic plane** (the Poincaré disk) with ordinary
-vertical **gravity**.
+Source: [`examples/physics/hyperbolic_world.ling`](https://github.com/taellinglin/ling/blob/master/examples/physics/hyperbolic_world.ling)
 
-```
+A small block world where the ground is the **hyperbolic plane**. It is inspired by
+[Hypermine](https://github.com/Ralith/hypermine), which is set in full 3D hyperbolic space
+(H³). This demo uses its simplest playable cousin, **H²×ℝ**: you walk on the hyperbolic
+plane (drawn as a Poincaré disk) and gravity works normally in the vertical direction.
+
+Run it from the repository root:
+
+```sh
 ling run examples/physics/hyperbolic_world.ling
 ```
 
 ## Controls
 
 | Key | Action |
-|-----|--------|
-| `W` / `S` | walk forward / back |
-| `A` / `D` | strafe left / right |
-| `Q` / `E` | turn left / right |
-| `SPACE` | jump (gravity pulls you back down) |
+|---|---|
+| `W` / `S` | Walk forward / back |
+| `A` / `D` | Step left / right |
+| `Q` / `E` | Turn left / right |
+| `Space` | Jump |
 
 ## What makes it hyperbolic
 
-- **Exponential crowding.** Blocks are placed on a lattice of growing rings;
-  because the plane is hyperbolic, ever more cells pile up toward the horizon
-  (the disk boundary = infinity) and shrink via the Poincaré conformal factor
-  `1 − |z|²`.
-- **Möbius locomotion.** You stay at the disk centre and the whole world slides
-  under you by a **Möbius translation** `z ↦ (z + a)/(1 + ā z)`. Turning is a
-  rotation about the centre.
-- **Holonomy.** Walk a closed loop and you come back *rotated* — the signature
-  effect of moving through negatively-curved space. (Try strafing in a square.)
-- **Gravity** acts on the ordinary vertical axis (the ℝ factor), so jumping and
-  falling feel completely normal even though the ground is hyperbolic.
+- **Crowding toward the edge.** Blocks sit on rings, and each ring has more blocks than
+  the one inside it (`cells = 6 * ring`). Toward the edge of the disk, which stands for
+  infinity, they pile up and shrink by the factor `1 − |z|²`.
+- **Möbius movement.** You stay at the centre of the disk and the world slides under you
+  by a Möbius translation, `z ↦ (z + a) / (1 + ā z)`. Turning rotates the world around
+  the centre.
+- **Holonomy.** Walk in a closed loop, such as a square, and you come back turned. This
+  is what moving through negatively curved space feels like.
+- **Normal gravity.** Jumping and falling use the ordinary vertical axis, so they feel
+  the same as in any game.
 
-## Procedural block "textures"
+## Blocks without textures
 
-Each cell hashes its lattice id (`fract(sin(...))`) into a block **type**
-(grass / stone / dirt / crystal) and a **height**, so the world is generated
-without any texture assets — the colour *is* the procedural texture, shaded with
-the [holographic cel renderer](../reference/shapes.md#rendering--lighting-modes-holographic-cel).
+Each block hashes its ring and position (`hash01`, a `fract(sin(...))` hash) into a type
+(grass, stone, dirt or crystal) and a height. The colour comes from the type, and the
+cel-shading settings (`set_shade_mode`, `set_cel_bands`, `set_rim`) do the rest. No
+texture files are needed. See [Post-FX and Lighting](../reference/postfx.md).
 
-## Notes & ideas
+## Ideas to try
 
-- The blocks are drawn with the `cube` primitive; swap in `prism`, `cylinder`,
-  or `icosahedron` for different tilings.
-- Increase the ring count or `cells = 6 * ring` for a denser world.
-- This is H²×ℝ, not full H³ — a true Hypermine-style H³ voxel engine would
-  track an `{p,q,r}` honeycomb and node graph, which is a much larger build.
+- The blocks are drawn with `cube`. Try `cylinder` or another shape from
+  [3D Shapes and Meshes](../reference/shapes.md).
+- Raise the ring limit (`ring <= 4`) for a bigger world.
+- Change `STEP` and `TURN` to move or turn faster.
+
+For a different kind of 3D demo, see [Hyperbolic 3D](hyperbolic-3d.md).

@@ -52,6 +52,57 @@ impl Location {
     }
 }
 
+/// Every function whose vendor id is `vendor` and whose base class is
+/// `class` (e.g. NVIDIA display controllers: 0x10DE, 0x03).
+pub fn find_all(vendor: u16, class: u8) -> alloc::vec::Vec<Location> {
+    let mut out = alloc::vec::Vec::new();
+    for bus in 0..=255u8 {
+        for device in 0..32u8 {
+            if read32(bus, device, 0, 0x00) & 0xFFFF == 0xFFFF {
+                continue;
+            }
+            let header_type = (read32(bus, device, 0, 0x0C) >> 16) & 0xFF;
+            let max_function = if header_type & 0x80 != 0 { 8 } else { 1 };
+            for function in 0..max_function {
+                let id = read32(bus, device, function, 0x00);
+                if id & 0xFFFF != vendor as u32 {
+                    continue;
+                }
+                if (read32(bus, device, function, 0x08) >> 24) as u8 == class {
+                    out.push(Location { bus, device, function });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Every function whose base class and subclass match (any vendor, any
+/// prog_if), in bus/device/function order -- e.g. all Ethernet controllers
+/// (0x02, 0x00), so `net_e1000` and `net_igc` can each pick the one they drive.
+pub fn find_all_class(class: u8, subclass: u8) -> alloc::vec::Vec<Location> {
+    let mut out = alloc::vec::Vec::new();
+    for bus in 0..=255u8 {
+        for device in 0..32u8 {
+            if read32(bus, device, 0, 0x00) & 0xFFFF == 0xFFFF {
+                continue;
+            }
+            let header_type = (read32(bus, device, 0, 0x0C) >> 16) & 0xFF;
+            let max_function = if header_type & 0x80 != 0 { 8 } else { 1 };
+            for function in 0..max_function {
+                if read32(bus, device, function, 0x00) & 0xFFFF == 0xFFFF {
+                    continue;
+                }
+                let class_reg = read32(bus, device, function, 0x08);
+                if (class_reg >> 24) as u8 == class && (class_reg >> 16) as u8 == subclass {
+                    out.push(Location { bus, device, function });
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Scan every bus/device/function for a PCI device matching
 /// (class, subclass, prog_if) and return its location. Exhaustive
 /// (256 * 32 * 8 config reads) but that's a few hundred thousand cheap

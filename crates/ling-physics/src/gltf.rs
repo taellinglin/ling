@@ -22,6 +22,16 @@ pub struct GltfMesh {
     pub verts: Vec<GltfVertex>,
     pub indices: Vec<u32>,
     pub mat_idx: Option<usize>,
+    /// Index into `GltfModel.textures` for this mesh's base-color texture, if any.
+    pub base_tex: Option<usize>,
+}
+
+/// A decoded base-color texture: power-of-two-agnostic RGBA8, row-major, top-left origin.
+#[derive(Clone, Debug)]
+pub struct GltfImage {
+    pub w: u32,
+    pub h: u32,
+    pub rgba: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +136,15 @@ pub struct GltfModel {
     pub root_nodes: Vec<usize>,
     /// Procedural humanoid skeleton (empty until `autorig()` is called).
     pub bones: Vec<SimpleBone>,
+    /// Decoded base-color textures referenced by meshes (base_tex).
+    pub textures: Vec<GltfImage>,
+    /// Per-mesh hidden flags (index = mesh index; missing/short = visible).
+    /// Hidden meshes are skipped by `skin_animated` (empty vertex list), so
+    /// equipment variants baked into one GLB cost nothing while unworn.
+    pub mesh_hidden: Vec<bool>,
+    /// Per-mesh multiplicative 0xRRGGBB tint (missing/short = white); set with
+    /// `gltf_mesh_tint`, e.g. to colourize a greyscale hair texture.
+    pub mesh_tint: Vec<u32>,
 }
 
 /// Shortest distance from point `p` to segment `a`→`b`.
@@ -141,32 +160,86 @@ fn point_seg_dist(p: Vec3, a: Vec3, b: Vec3) -> f32 {
 }
 
 impl GltfModel {
-    /// Load a .glb or .gltf file.
-    #[cfg(feature = "with-gltf")]
+    /// Load a .glb or .gltf file from the filesystem (native).
+    #[cfg(all(feature = "with-gltf", not(target_arch = "wasm32")))]
     pub fn load(path: &str) -> Result<Self, String> {
-        let (doc, buffers, _images) = ::gltf::import(path).map_err(|e| e.to_string())?;
+        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        Self::load_from_bytes(&bytes)
+    }
+
+    /// Load a .glb / .gltf from an in-memory buffer (works on wasm too).
+    #[cfg(feature = "with-gltf")]
+    pub fn load_from_bytes(data: &[u8]) -> Result<Self, String> {
+        let (doc, buffers, images) = ::gltf::import_slice(data).map_err(|e| e.to_string())?;
         let mut model = GltfModel::default();
 
-        // ── meshes: positions / normals / uvs / indices (per primitive, concatenated) ──
+        // ── images: decode each glTF image to RGBA8 (deduped by source index) ──
+        let img_rgba = |idx: usize| -> Option<GltfImage> {
+            let d = images.get(idx)?;
+            let (w, h) = (d.width, d.height);
+            let n = (w * h) as usize;
+            use ::gltf::image::Format;
+            let rgba: Vec<u8> = match d.format {
+                Format::R8G8B8A8 => d.pixels.clone(),
+                Format::R8G8B8 => {
+                    let mut o = Vec::with_capacity(n * 4);
+                    for c in d.pixels.chunks_exact(3) {
+                        o.extend_from_slice(&[c[0], c[1], c[2], 255]);
+                    }
+                    o
+                },
+                Format::R8G8 => {
+                    let mut o = Vec::with_capacity(n * 4);
+                    for c in d.pixels.chunks_exact(2) {
+                        o.extend_from_slice(&[c[0], c[0], c[0], c[1]]);
+                    }
+                    o
+                },
+                Format::R8 => {
+                    let mut o = Vec::with_capacity(n * 4);
+                    for &c in &d.pixels {
+                        o.extend_from_slice(&[c, c, c, 255]);
+                    }
+                    o
+                },
+                _ => return None, // 16-bit formats: skip (rare for base color)
+            };
+            Some(GltfImage { w, h, rgba })
+        };
+        // material index -> index into model.textures (lazily filled below)
+        let mut mat_to_tex: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        let mut src_to_tex: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for mat in doc.materials() {
+            let Some(mi) = mat.index() else { continue };
+            let Some(info) = mat.pbr_metallic_roughness().base_color_texture() else { continue };
+            let src = info.texture().source().index();
+            let ti = if let Some(&t) = src_to_tex.get(&src) {
+                t
+            } else if let Some(img) = img_rgba(src) {
+                let t = model.textures.len();
+                model.textures.push(img);
+                src_to_tex.insert(src, t);
+                t
+            } else {
+                continue;
+            };
+            mat_to_tex.insert(mi, ti);
+        }
+
+        // ── meshes: ONE GltfMesh per primitive (so each keeps its own texture) ──
         for mesh in doc.meshes() {
-            let mut verts: Vec<GltfVertex> = Vec::new();
-            let mut indices: Vec<u32> = Vec::new();
-            let mut mat_idx: Option<usize> = None;
+            let mname = mesh.name().unwrap_or("").to_string();
             for prim in mesh.primitives() {
                 let reader = prim.reader(|b| buffers.get(b.index()).map(|d| &d.0[..]));
                 let positions: Vec<[f32; 3]> = match reader.read_positions() {
                     Some(p) => p.collect(),
                     None => continue,
                 };
-                let base = verts.len() as u32;
-                let normals: Vec<[f32; 3]> = reader
-                    .read_normals()
-                    .map(|n| n.collect())
-                    .unwrap_or_default();
-                let uvs: Vec<[f32; 2]> = reader
-                    .read_tex_coords(0)
-                    .map(|u| u.into_f32().collect())
-                    .unwrap_or_default();
+                let normals: Vec<[f32; 3]> = reader.read_normals().map(|n| n.collect()).unwrap_or_default();
+                let uvs: Vec<[f32; 2]> = reader.read_tex_coords(0).map(|u| u.into_f32().collect()).unwrap_or_default();
+                let joints: Vec<[u16; 4]> = reader.read_joints(0).map(|j| j.into_u16().collect()).unwrap_or_default();
+                let weights: Vec<[f32; 4]> = reader.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default();
+                let mut verts: Vec<GltfVertex> = Vec::with_capacity(positions.len());
                 for (i, p) in positions.iter().enumerate() {
                     let n = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
                     let uv = uvs.get(i).copied().unwrap_or([0.0, 0.0]);
@@ -174,32 +247,19 @@ impl GltfModel {
                         pos: Vec3::new(p[0], p[1], p[2]),
                         normal: Vec3::new(n[0], n[1], n[2]),
                         uv: Vec2::new(uv[0], uv[1]),
-                        joints: [0; 4],
-                        weights: [1.0, 0.0, 0.0, 0.0],
+                        joints: joints.get(i).copied().unwrap_or([0; 4]),
+                        weights: weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
                     });
                 }
+                let mut indices: Vec<u32> = Vec::new();
                 match reader.read_indices() {
-                    Some(idx) => {
-                        for i in idx.into_u32() {
-                            indices.push(base + i);
-                        }
-                    },
-                    None => {
-                        for i in 0..positions.len() as u32 {
-                            indices.push(base + i);
-                        }
-                    },
+                    Some(idx) => indices.extend(idx.into_u32()),
+                    None => indices.extend(0..positions.len() as u32),
                 }
-                if mat_idx.is_none() {
-                    mat_idx = prim.material().index();
-                }
+                let mat_idx = prim.material().index();
+                let base_tex = mat_idx.and_then(|m| mat_to_tex.get(&m).copied());
+                model.meshes.push(GltfMesh { name: mname.clone(), verts, indices, mat_idx, base_tex });
             }
-            model.meshes.push(GltfMesh {
-                name: mesh.name().unwrap_or("").to_string(),
-                verts,
-                indices,
-                mat_idx,
-            });
         }
 
         // ── node hierarchy (name, transform, mesh ref, children) ──
@@ -216,6 +276,53 @@ impl GltfModel {
             for n in scene.nodes() {
                 model.root_nodes.push(n.index());
             }
+        }
+
+        // ── skins: joint node indices + inverse-bind matrices ──
+        for skin in doc.skins() {
+            let reader = skin.reader(|b| buffers.get(b.index()).map(|d| &d.0[..]));
+            let ibms: Vec<Mat4> = reader
+                .read_inverse_bind_matrices()
+                .map(|it| it.map(|m| Mat4::from_cols_array_2d(&m)).collect())
+                .unwrap_or_default();
+            let joints: Vec<GltfJoint> = skin
+                .joints()
+                .enumerate()
+                .map(|(i, node)| GltfJoint {
+                    node_idx: node.index(),
+                    inverse_bind: ibms.get(i).copied().unwrap_or(Mat4::IDENTITY),
+                })
+                .collect();
+            model.skins.push(GltfSkin { name: skin.name().unwrap_or("").to_string(), joints });
+        }
+
+        // ── animations: per-channel keyframe tracks (T/R/S) ──
+        for anim in doc.animations() {
+            let mut channels: Vec<AnimChannel> = Vec::new();
+            let mut duration = 0.0f32;
+            for ch in anim.channels() {
+                let reader = ch.reader(|b| buffers.get(b.index()).map(|d| &d.0[..]));
+                let times: Vec<f32> = reader.read_inputs().map(|it| it.collect()).unwrap_or_default();
+                if let Some(&last) = times.last() {
+                    if last > duration { duration = last; }
+                }
+                let (target, values): (AnimTarget, Vec<Vec4>) = match reader.read_outputs() {
+                    Some(::gltf::animation::util::ReadOutputs::Translations(it)) =>
+                        (AnimTarget::Translation, it.map(|t| Vec4::new(t[0], t[1], t[2], 0.0)).collect()),
+                    Some(::gltf::animation::util::ReadOutputs::Rotations(r)) =>
+                        (AnimTarget::Rotation, r.into_f32().map(|q| Vec4::new(q[0], q[1], q[2], q[3])).collect()),
+                    Some(::gltf::animation::util::ReadOutputs::Scales(it)) =>
+                        (AnimTarget::Scale, it.map(|sc| Vec4::new(sc[0], sc[1], sc[2], 0.0)).collect()),
+                    _ => continue,
+                };
+                let interp = match ch.sampler().interpolation() {
+                    ::gltf::animation::Interpolation::Step => Interpolation::Step,
+                    ::gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
+                    _ => Interpolation::Linear,
+                };
+                channels.push(AnimChannel { node_idx: ch.target().node().index(), target, times, values, interp });
+            }
+            model.animations.push(GltfAnimation { name: anim.name().unwrap_or("").to_string(), channels, duration });
         }
 
         Ok(model)
@@ -353,6 +460,181 @@ impl GltfModel {
 
     /// Forward-kinematics: turn a per-bone local rotation pose (flat XYZ-euler
     /// radians, 3 per bone) into per-bone linear-blend skinning matrices.
+    /// Skin every mesh by the real skeleton posed by animation `anim_idx` at
+    /// `time` seconds (glTF node TRS + channels + skin inverse-bind). Returns
+    /// per-mesh vertex positions in model space (same shape as `skin_local`).
+    pub fn skin_animated(&self, anim_idx: usize, time: f32) -> Vec<Vec<[f32; 3]>> {
+        let n = self.nodes.len();
+        if n == 0 || self.skins.is_empty() {
+            return self.bind_positions();
+        }
+        let world = self.world_mats(anim_idx, time);
+        let skin = &self.skins[0];
+        let joint_mat: Vec<Mat4> = skin.joints.iter()
+            .map(|j| if j.node_idx < n { world[j.node_idx] * j.inverse_bind } else { Mat4::IDENTITY })
+            .collect();
+        self.skin_with(&joint_mat)
+    }
+
+    /// Skin THIS model with `src`'s clip `anim_idx` at `time`, joints matched to
+    /// `src` nodes by NAME. Equipment baked on the same skeleton but without
+    /// animations follows the body exactly; joints `src` lacks keep bind pose.
+    pub fn skin_animated_from(&self, src: &GltfModel, anim_idx: usize, time: f32) -> Vec<Vec<[f32; 3]>> {
+        let n = self.nodes.len();
+        if n == 0 || self.skins.is_empty() {
+            return self.bind_positions();
+        }
+        let sw = src.world_mats(anim_idx, time);
+        let own = self.world_mats(usize::MAX, 0.0);
+        let joint_mat: Vec<Mat4> = self.skins[0].joints.iter()
+            .map(|j| {
+                if j.node_idx >= n { return Mat4::IDENTITY; }
+                let nm = &self.nodes[j.node_idx].name;
+                let w = if nm.is_empty() { None } else { src.nodes.iter().position(|x| x.name == *nm).map(|k| sw[k]) };
+                w.unwrap_or(own[j.node_idx]) * j.inverse_bind
+            })
+            .collect();
+        self.skin_with(&joint_mat)
+    }
+
+    /// Clip `anim_idx` at `time` (sampled from `src`'s animations when given,
+    /// joints matched by name) with procedural pose layers — see world_mats_posed.
+    pub fn skin_animated_posed(&self, src: Option<&GltfModel>, anim_idx: usize, time: f32, pose: &[(String, [f32; 3])]) -> Vec<Vec<[f32; 3]>> {
+        let n = self.nodes.len();
+        if n == 0 || self.skins.is_empty() {
+            return self.bind_positions();
+        }
+        let joint_mat: Vec<Mat4> = match src {
+            None => {
+                let world = self.world_mats_posed(anim_idx, time, pose);
+                self.skins[0].joints.iter()
+                    .map(|j| if j.node_idx < n { world[j.node_idx] * j.inverse_bind } else { Mat4::IDENTITY })
+                    .collect()
+            }
+            Some(sm) => {
+                let sw = sm.world_mats_posed(anim_idx, time, pose);
+                let own = self.world_mats(usize::MAX, 0.0);
+                self.skins[0].joints.iter()
+                    .map(|j| {
+                        if j.node_idx >= n { return Mat4::IDENTITY; }
+                        let nm = &self.nodes[j.node_idx].name;
+                        let w = if nm.is_empty() { None } else { sm.nodes.iter().position(|x| x.name == *nm).map(|k| sw[k]) };
+                        w.unwrap_or(own[j.node_idx]) * j.inverse_bind
+                    })
+                    .collect()
+            }
+        };
+        self.skin_with(&joint_mat)
+    }
+
+    fn bind_positions(&self) -> Vec<Vec<[f32; 3]>> {
+        self.meshes.iter().enumerate().map(|(mi, m)| {
+            if self.mesh_hidden.get(mi).copied().unwrap_or(false) { return Vec::new(); }
+            m.verts.iter().map(|v| [v.pos.x, v.pos.y, v.pos.z]).collect()
+        }).collect()
+    }
+
+    /// World matrix of every node posed by clip `anim_idx` at `time`.
+    fn world_mats(&self, anim_idx: usize, time: f32) -> Vec<Mat4> {
+        self.world_mats_posed(anim_idx, time, &[])
+    }
+
+    /// `world_mats` plus procedural pose layers on top of the sampled clip:
+    /// each `(bone name, euler XYZ radians)` post-multiplies that node's local
+    /// rotation; the special name `*root*` rotates the whole skeleton in model
+    /// space about the pivot given by a `*pivot*` entry (x, y, z; default origin).
+    fn world_mats_posed(&self, anim_idx: usize, time: f32, pose: &[(String, [f32; 3])]) -> Vec<Mat4> {
+        let n = self.nodes.len();
+        // base TRS per node, then override with the animation's channels at `time`
+        let mut trans = vec![Vec3::ZERO; n];
+        let mut rot = vec![Quat::IDENTITY; n];
+        let mut scale = vec![Vec3::ONE; n];
+        for (i, node) in self.nodes.iter().enumerate() {
+            let (s, r, t) = node.transform.to_scale_rotation_translation();
+            scale[i] = s; rot[i] = r; trans[i] = t;
+        }
+        if let Some(anim) = self.animations.get(anim_idx) {
+            for ch in &anim.channels {
+                if ch.node_idx >= n { continue; }
+                let v = ch.sample(time);
+                match ch.target {
+                    AnimTarget::Translation => trans[ch.node_idx] = Vec3::new(v.x, v.y, v.z),
+                    AnimTarget::Rotation => rot[ch.node_idx] = Quat::from_xyzw(v.x, v.y, v.z, v.w).normalize(),
+                    AnimTarget::Scale => scale[ch.node_idx] = Vec3::new(v.x, v.y, v.z),
+                    AnimTarget::Weights => {},
+                }
+            }
+        }
+        let mut root_m = Mat4::IDENTITY;
+        if !pose.is_empty() {
+            let mut pivot = Vec3::ZERO;
+            for (name, e) in pose {
+                if name == "*pivot*" {
+                    pivot = Vec3::new(e[0], e[1], e[2]);
+                }
+            }
+            for (name, e) in pose {
+                let q = Quat::from_euler(glam::EulerRot::XYZ, e[0], e[1], e[2]);
+                if name == "*root*" {
+                    root_m = Mat4::from_translation(pivot) * Mat4::from_quat(q) * Mat4::from_translation(-pivot);
+                } else if name != "*pivot*" {
+                    if let Some(i) = self.nodes.iter().position(|nd| nd.name == *name) {
+                        rot[i] = (rot[i] * q).normalize();
+                    }
+                }
+            }
+        }
+        let local: Vec<Mat4> = (0..n).map(|i| Mat4::from_scale_rotation_translation(scale[i], rot[i], trans[i])).collect();
+        // world transforms via the node hierarchy (iterative; children lists give the tree)
+        let mut parent = vec![usize::MAX; n];
+        for (pi, node) in self.nodes.iter().enumerate() {
+            for &c in &node.children {
+                if c < n { parent[c] = pi; }
+            }
+        }
+        let mut world = vec![Mat4::IDENTITY; n];
+        let mut done = vec![false; n];
+        // resolve in dependency order (parent before child); bounded passes
+        for _ in 0..n {
+            let mut progressed = false;
+            for i in 0..n {
+                if done[i] { continue; }
+                let p = parent[i];
+                if p == usize::MAX {
+                    world[i] = root_m * local[i]; done[i] = true; progressed = true;
+                } else if done[p] {
+                    world[i] = world[p] * local[i]; done[i] = true; progressed = true;
+                }
+            }
+            if !progressed { break; }
+        }
+        world
+    }
+
+    fn skin_with(&self, joint_mat: &[Mat4]) -> Vec<Vec<[f32; 3]>> {
+        // skin each (visible) mesh
+        self.meshes.iter().enumerate().map(|(mi, mesh)| {
+            if self.mesh_hidden.get(mi).copied().unwrap_or(false) {
+                return Vec::new();
+            }
+            mesh.verts.iter().map(|v| {
+                let p = Vec4::new(v.pos.x, v.pos.y, v.pos.z, 1.0);
+                let mut acc = Vec4::ZERO;
+                let mut wsum = 0.0f32;
+                for k in 0..4 {
+                    let w = v.weights[k];
+                    if w <= 0.0 { continue; }
+                    let ji = v.joints[k] as usize;
+                    if ji < joint_mat.len() {
+                        acc += joint_mat[ji] * p * w;
+                        wsum += w;
+                    }
+                }
+                if wsum > 1e-4 { let o = acc / wsum; [o.x, o.y, o.z] } else { [v.pos.x, v.pos.y, v.pos.z] }
+            }).collect()
+        }).collect()
+    }
+
     pub fn skinning_mats(&self, euler: &[f32]) -> Vec<Mat4> {
         let n = self.bones.len();
         let mut world = vec![Mat4::IDENTITY; n];
@@ -462,7 +744,7 @@ impl GltfModel {
             },
         ];
         let indices = vec![0u32, 1, 2, 0, 2, 3];
-        let mesh = GltfMesh { name: "Cube".into(), verts, indices, mat_idx: None };
+        let mesh = GltfMesh { name: "Cube".into(), verts, indices, mat_idx: None, base_tex: None };
         let node = GltfNode {
             name: "Cube".into(),
             transform: Mat4::IDENTITY,

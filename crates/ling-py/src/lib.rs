@@ -49,7 +49,7 @@ impl PyAudioEngine {
     ) {
         self.inner.set_tone(
             idx,
-            ling_audio::ToneParams { x, y, z, w, freq, amp, lfo_rate, lfo_depth },
+            ling_audio::ToneParams { x, y, z, w, freq, amp, lfo_rate, lfo_depth, ..Default::default() },
         );
     }
 

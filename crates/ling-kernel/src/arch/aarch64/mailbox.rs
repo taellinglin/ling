@@ -39,6 +39,10 @@ static mut BUFFER: MailboxBuffer = MailboxBuffer([0; 48]);
 /// on-screen diagnostic: [phys_w, phys_h, virt_w, virt_h, reported_pitch, size_bytes].
 pub static mut FB_DIAG: [u32; 6] = [0; 6];
 
+/// Where the firmware put the framebuffer (ARM address, bytes): RAM the frame
+/// allocator must not hand out, since every frame drawn rewrites it.
+pub static mut FB_REGION: (u64, u64) = (0, 0);
+
 const MAILBOX_TIMEOUT_SPINS: u32 = 10_000_000;
 
 unsafe fn call(channel: u32) -> bool {
@@ -141,6 +145,44 @@ pub fn board_revision() -> Option<u32> {
     }
 }
 
+/// SoC temperature in millidegrees Celsius (GET_TEMPERATURE, id 0).
+pub fn temperature_mc() -> Option<u32> {
+    unsafe {
+        BUFFER.0[0] = 8 * 4;
+        BUFFER.0[1] = 0;
+        BUFFER.0[2] = 0x0003_0006;
+        BUFFER.0[3] = 8;
+        BUFFER.0[4] = 0;
+        BUFFER.0[5] = 0; // temperature id
+        BUFFER.0[6] = 0;
+        BUFFER.0[7] = TAG_END;
+        if call(CHANNEL_PROPERTY) {
+            Some(BUFFER.0[6])
+        } else {
+            None
+        }
+    }
+}
+
+/// The ARM core clock in Hz (GET_CLOCK_RATE, clock id 3).
+pub fn arm_clock_hz() -> Option<u32> {
+    unsafe {
+        BUFFER.0[0] = 8 * 4;
+        BUFFER.0[1] = 0;
+        BUFFER.0[2] = 0x0003_0002;
+        BUFFER.0[3] = 8;
+        BUFFER.0[4] = 0;
+        BUFFER.0[5] = 3; // ARM
+        BUFFER.0[6] = 0;
+        BUFFER.0[7] = TAG_END;
+        if call(CHANNEL_PROPERTY) {
+            Some(BUFFER.0[6])
+        } else {
+            None
+        }
+    }
+}
+
 pub fn arm_memory() -> Option<(u64, u64)> {
     unsafe {
         BUFFER.0[0] = 8 * 4;
@@ -224,6 +266,7 @@ pub fn allocate_framebuffer(w: u32, h: u32, depth: u32) -> Option<(u64, u32, u32
             let virt_w = BUFFER.0[37];
             let virt_h = BUFFER.0[38];
             FB_DIAG = [phys_w, phys_h, virt_w, virt_h, reported_pitch, alloc_size];
+            FB_REGION = (arm_addr, alloc_size as u64);
 
             // Physical = display mode; virtual = the stored surface (what the
             // pitch is based on). Fall back through the less-trusted values.

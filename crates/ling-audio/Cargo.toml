@@ -13,6 +13,7 @@ cpal     = "0.15"
 hound    = "3.5"
 half     = "2"
 rustfft  = "6.2"
+lewton   = "0.10"   # Ogg Vorbis BGM (load_wav dispatches on the .ogg extension)
 
 [lib]
 name = "ling_audio"

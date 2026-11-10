@@ -3,11 +3,11 @@
 //! via a small graphical prompt and persisted to lingfs `/services`, then
 //! honored (and reported) on every subsequent boot.
 //!
-//! Honest scope: this is the *service-management* half. A working sshd also
-//! needs server-side TCP (accept/listen -- netstack is client-only today) and
-//! the SSH transport itself (KEX/auth/channels -- a large protocol like TLS,
-//! built on `crypto.rs`). So an "enabled" service here is configured and
-//! announced at boot; the listener/protocol is the remaining work.
+//! The server itself is real now: `drivers::sshd` is a persistent background
+//! SSH + SFTP server (curve25519 KEX, ed25519 host key, chacha20-poly1305,
+//! password auth) over the netstack's listen/accept sockets. This module only
+//! manages the boot flag; `startup::set("ssh", ..)` / the console's
+//! `ssh-serve on|off` flip both the flag and the live listener.
 
 use crate::drivers::{font8x8, framebuffer, keyboard};
 use crate::fs::lingfs;
@@ -45,22 +45,35 @@ pub fn ssh_enabled() -> bool {
     false
 }
 
-/// Persist whether SSH should start at boot.
-pub fn set_ssh(on: bool) {
+/// Persist whether SSH should start at boot. Returns whether it was saved: a
+/// failed save used to vanish silently, leaving the switch to snap back at the
+/// next boot with nothing in the log to say why.
+pub fn set_ssh(on: bool) -> bool {
     let line: &[u8] = if on { b"ssh 1\n" } else { b"ssh 0\n" };
-    let _ = lingfs::write_file(SERVICES_PATH, line);
+    let saved = lingfs::write_file(SERVICES_PATH, line).is_ok();
+    if !saved {
+        crate::console_write(if lingfs::is_mounted() {
+            b"services: could not save the SSH setting (write to /services failed)\n".as_slice()
+        } else {
+            b"services: could not save the SSH setting (the filesystem is not mounted)\n".as_slice()
+        });
+    }
+    saved
 }
 
 /// Run once at boot: on first boot (no `/services` yet) ask whether to enable
 /// SSH, persist the answer, then report the SSH service state.
 pub fn boot_configure() {
+    if !lingfs::is_mounted() {
+        crate::console_write(b"services: lingfs is NOT mounted -- settings cannot be saved this boot\n");
+    }
     if !is_configured() && framebuffer::available() {
         prompt_ssh();
     }
     if ssh_enabled() {
-        crate::console_write(b"services: sshd enabled at boot (SSH transport is WIP)\n");
+        crate::console_write(b"services: SSH + SFTP server enabled at boot\n");
     } else {
-        crate::console_write(b"services: sshd off (enable with 'services enable ssh')\n");
+        crate::console_write(b"services: sshd off (enable with 'ssh-serve on')\n");
     }
 }
 

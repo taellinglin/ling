@@ -20,6 +20,8 @@ pub const EMPTY_COMMIT: CommitEntry = CommitEntry {
 
 pub struct CommitState {
     pub mounted: bool,
+    /// Bumped by every compaction; the slot with the higher one is current.
+    pub generation: u32,
     pub commit_count: u32,
     pub next_seq: u32,
     pub commits: [CommitEntry; MAX_COMMITS],
@@ -27,6 +29,7 @@ pub struct CommitState {
 
 pub static mut COMMITS: CommitState = CommitState {
     mounted: false,
+    generation: 0,
     commit_count: 0,
     next_seq: 0,
     commits: [EMPTY_COMMIT; MAX_COMMITS],
@@ -55,7 +58,44 @@ pub fn load_superblock() -> Result<(u32, u32, u32, u32), ()> {
     let next_free_block = u32::from_le_bytes(block[12..16].try_into().unwrap());
     let commit_count = u32::from_le_bytes(block[16..20].try_into().unwrap());
     let next_seq = u32::from_le_bytes(block[20..24].try_into().unwrap());
+    unsafe { COMMITS.generation = u32::from_le_bytes(block[24..28].try_into().unwrap()) };
     Ok((object_count, next_free_block, commit_count, next_seq))
+}
+
+/// The generation of a valid superblock at `lba`, if there is one.
+fn slot_generation(lba: u32) -> Option<u32> {
+    let mut block = [0u8; BLOCK_SIZE];
+    read_block(lba, &mut block).ok()?;
+    if u64::from_le_bytes(block[0..8].try_into().unwrap()) != MAGIC {
+        return None;
+    }
+    Some(u32::from_le_bytes(block[24..28].try_into().unwrap()))
+}
+
+/// Point the volume at its current slot (the valid one with the higher
+/// generation). False when neither slot holds a volume.
+pub fn select_slot() -> bool {
+    let home = objects::home_lba();
+    let alt = home + objects::SLOT_SECTORS;
+    let a = slot_generation(home);
+    let b = slot_generation(alt);
+    match (a, b) {
+        (Some(ga), Some(gb)) if gb > ga => objects::use_slot(alt),
+        (None, Some(_)) => objects::use_slot(alt),
+        (Some(_), _) => objects::use_slot(home),
+        (None, None) => {
+            objects::use_slot(home);
+            return false;
+        },
+    }
+    true
+}
+
+/// Invalidate the second slot's superblock (a format must not be outranked by
+/// an older compacted copy). Best effort: a disk too small for it never had one.
+pub fn forget_other_slot() {
+    let zero = [0u8; BLOCK_SIZE];
+    let _ = write_block(objects::home_lba() + objects::SLOT_SECTORS, &zero);
 }
 
 pub fn save_superblock() -> Result<(), ()> {
@@ -66,6 +106,7 @@ pub fn save_superblock() -> Result<(), ()> {
         block[12..16].copy_from_slice(&objects::OBJECTS.next_free_block.to_le_bytes());
         block[16..20].copy_from_slice(&COMMITS.commit_count.to_le_bytes());
         block[20..24].copy_from_slice(&COMMITS.next_seq.to_le_bytes());
+        block[24..28].copy_from_slice(&COMMITS.generation.to_le_bytes());
         write_block(base_lba(), &block)
     }
 }
@@ -118,6 +159,13 @@ pub fn root() -> Hash {
 }
 
 pub fn commit(new_root: Hash) -> Result<(), ()> {
+    // lingfs never frees in place: when the commit log is full or object
+    // slots run low, copy what `new_root` still uses into the other slot.
+    let full = unsafe { COMMITS.commit_count as usize >= MAX_COMMITS };
+    let low = objects::MAX_OBJECTS.saturating_sub(unsafe { objects::OBJECTS.object_count } as usize) < COMPACT_FREE_OBJECTS;
+    if (full || low) && crate::fs::lingfs::compact(new_root, full) == Ok(true) {
+        return Ok(());
+    }
     unsafe {
         if COMMITS.commit_count as usize >= MAX_COMMITS {
             return Err(());
@@ -136,6 +184,19 @@ pub fn commit(new_root: Hash) -> Result<(), ()> {
     save_commits()?;
     save_superblock()?;
     Ok(())
+}
+
+/// Compact once fewer object slots than this are free.
+pub const COMPACT_FREE_OBJECTS: usize = 768;
+
+/// Start the commit log over with `root` as its one commit, in a slot whose
+/// objects were just rewritten (compaction).
+pub fn restart_log(root: Hash) {
+    unsafe {
+        COMMITS.commits = [EMPTY_COMMIT; MAX_COMMITS];
+        COMMITS.commits[0] = CommitEntry { root, parent: u32::MAX };
+        COMMITS.commit_count = 1;
+    }
 }
 
 pub fn commit_count() -> u32 {

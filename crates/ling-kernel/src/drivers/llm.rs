@@ -36,7 +36,7 @@ use ling_llm::{Error, Llm, Model, State, Tokenizer};
 
 /// tokens of context the cache is sized for (prompt + answer), when RAM allows; never fewer than MIN_CTX
 const CTX: usize = 2048;
-const MIN_CTX: usize = 512;
+const MIN_CTX: usize = 496;
 /// RAM kept free for everything else (the desktop, the app, the engine's scratch buffers)
 const RESERVE: u64 = 96 << 20;
 /// one device read at most this big, with a chance to yield between them
@@ -323,9 +323,16 @@ fn do_load(h: i64, loc: &str) {
     // RAM: the weights (about the file's size) + the f16 KV cache + the reserve
     let kv_per_tok = (cfg.n_layer * cfg.n_kv * cfg.head_dim * 2 * 2) as u64;
     let free = free_bytes();
-    let weights = src.len();
+    // (+3%: the allocator rounds each 8 MiB-or-smaller piece up to a power of two; ling-llm sizes its pieces to waste little)
+    let weights = src.len() + src.len() / 32;
     let room = free.saturating_sub(weights + RESERVE);
-    let ctx = ((room / kv_per_tok.max(1)) as usize).min(CTX).min(cfg.n_ctx.max(1));
+    let mut ctx = ((room / kv_per_tok.max(1)) as usize).min(CTX).min(cfg.n_ctx.max(1));
+    // one layer's K (or V) cache is one allocation of ctx * kv_dim f16s: an exact power of two plus the allocator's header would
+    // take twice the RAM (2048 tokens x 1024 = 4 MiB -> 8 MiB), so stay a few tokens under one
+    let layer_bytes = |c: usize| c * cfg.n_kv * cfg.head_dim * 2;
+    while ctx > 64 && (layer_bytes(ctx) + 64).next_power_of_two() > layer_bytes(ctx).next_power_of_two() {
+        ctx -= 8;
+    }
     if ctx < MIN_CTX {
         let need = weights + RESERVE + kv_per_tok * MIN_CTX as u64;
         return fail_load(h, alloc::format!("not enough memory for {loc}: {} MB free, the model needs about {} MB (try a smaller model, e.g. Qwen3-0.6B-Q8_0)", free >> 20, need >> 20));
@@ -413,8 +420,23 @@ fn run_job(id: String) {
     unsafe { PHASE = Phase::Ready };
 }
 
+/// ling-llm's row jobs, on every worker core (`par.rs`; one core on the Pi).
+fn llm_parallel(n: usize, ctx: *const (), f: unsafe fn(*const (), usize)) {
+    struct Job(*const (), unsafe fn(*const (), usize));
+    unsafe impl Sync for Job {}
+    impl Job {
+        fn run(&self, i: usize) {
+            // SAFETY: ling-llm hands over a context that outlives the call and a function for it
+            unsafe { (self.1)(self.0, i) }
+        }
+    }
+    let job = Job(ctx, f);
+    crate::par::for_each(n, &|i: usize| job.run(i));
+}
+
 fn task() {
     ling_llm::quant::set_yield(maybe_yield);
+    ling_llm::quant::set_parallel(llm_parallel);
     loop {
         if let Some((h, loc)) = unsafe { (*&raw mut WANT).take() } {
             do_load(h, &loc);
@@ -674,9 +696,8 @@ pub fn has_output() -> bool {
 /// status note, 2 = an error. A line still being written waits for its end.
 pub fn drain_lines(cols: usize, f: &mut dyn FnMut(u8, &str)) {
     unsafe {
-        for (is_err, s) in core::mem::take(&mut *&raw mut NOTES) {
-            f(if is_err { 2 } else { 1 }, &s);
-        }
+        // the answer first: a note waiting with it ("N tokens in ...") was written after it
+        let notes = core::mem::take(&mut *&raw mut NOTES);
         let text = core::mem::take(&mut *&raw mut OUT);
         let line = &mut *&raw mut LINE;
         for c in text.chars() {
@@ -701,6 +722,9 @@ pub fn drain_lines(cols: usize, f: &mut dyn FnMut(u8, &str)) {
                     },
                 }
             }
+        }
+        for (is_err, s) in notes {
+            f(if is_err { 2 } else { 1 }, &s);
         }
     }
 }

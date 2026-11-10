@@ -1,48 +1,83 @@
 # Hello World
 
-Ling supports any Unicode identifier. All built-in keywords work in every
-supported language simultaneously in the same source file.
+Every Ling program starts at a binding named `start` whose value is a `do` block.
+Here is the smallest program that prints something.
 
-## English
+## Your first program
+
+Save this as `hello.ling`:
 
 ```ling
 bind start = do {
     print("Hello, World!")
 }
 ```
-
-## Chinese 中文
-
-```ling
-令 启 = 执 {
-    印("你好，世界！")
-}
+```output
+Hello, World!
 ```
 
-## Thai ภาษาไทย
+Run it:
 
-```ling
-ผูก เริ่ม = ทำ {
-    พิมพ์("สวัสดีชาวโลก")
-}
+```sh
+ling run hello.ling
 ```
 
-## Korean 한국어
+- `bind start = ...` gives the name `start` to a value. Ling looks for this name to
+  know where your program begins.
+- `do { ... }` is a block of steps that run in order.
+- `print(...)` writes a line to the terminal. `println` does the same thing.
+
+## A little more
+
+Bindings can live outside `start` too. This program greets a name and then loops
+over a list:
 
 ```ling
-바인드 시작 = 실행 {
-    print("안녕하세요, 세계!")
-}
-```
-
-## Mixed (all valid simultaneously)
-
-```ling
-令 启 = 执 {
-    若 true {
-        印("Hello from 中文!")
+# Say hello to a few friends
+bind name = "Ling"
+bind start = do {
+    print("Hello, " + name + "!")
+    for friend in ["Ada", "Bo", "Chen"] {
+        print("Hi, " + friend)
     }
-    bind x = 42
-    println(x)
 }
 ```
+```output
+Hello, Ling!
+Hi, Ada
+Hi, Bo
+Hi, Chen
+```
+
+`+` joins text, and `for ... in` runs its block once for each item of the list.
+
+## Mixing languages
+
+Every keyword and builtin has a name in English, Chinese, Japanese, Korean and Thai,
+and you can mix them freely in one file. This program uses all five:
+
+```ling
+令 名字 = "Ling"
+bind start = do {
+    พิมพ์("สวัสดี " + 名字)
+    만약 참 {
+        印刷("こんにちは")
+    }
+}
+```
+```output
+สวัสดี Ling
+こんにちは
+```
+
+When a file is mostly in another language, `ling` notes the language it detected
+on standard error, for example `[detected language: Chinese (中文)]`. It doesn't
+change how the program runs.
+
+To learn how the five languages fit together, read
+[Writing in Five Languages](../language/multilingual.md).
+
+## Next steps
+
+- [Running Programs](running.md): the JIT, the interpreter, and projects.
+- [Values and Bindings](../tutorials/values.md): the first tutorial.

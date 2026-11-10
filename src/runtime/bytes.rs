@@ -83,6 +83,7 @@ pub(super) fn hex_arg(args: &[Value], i: usize) -> Result<Vec<u8>, String> {
 }
 
 /// Argument `i` as exactly `N` hex-encoded bytes.
+#[cfg_attr(not(feature = "privacy"), allow(dead_code))] // lw_* (privacy) builtins
 pub(super) fn hex_arg_n<const N: usize>(args: &[Value], i: usize) -> Result<[u8; N], String> {
     let mut v = hex_arg(args, i)?;
     let out: Result<[u8; N], _> = v.as_slice().try_into();
@@ -399,7 +400,8 @@ fn write_varint(mut n: u64) -> Vec<u8> {
 /// directory, fsync, then rename over the target.
 fn atomic_write(path: &str, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    let rnd = ling_crypto::rng::random_bytes::<8>();
+    let mut rnd = [0u8; 8];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut rnd);
     let tmp = format!("{path}.tmp-{}", to_hex(&rnd));
     let res = (|| {
         let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;

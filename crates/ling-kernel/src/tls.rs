@@ -404,6 +404,7 @@ pub fn https_request(
     method: &str,
     path: &str,
     content_type: &str,
+    extra: &str,
     body: &[u8],
     out: &mut [u8],
     chunk: usize,
@@ -413,7 +414,7 @@ pub fn https_request(
     let (mut c_app, mut s_app, pos, rxlen) = tls_handshake(host, port, log)?;
     let tx = unsafe { &mut *&raw mut TXBUF };
     let rx = unsafe { &mut *&raw mut RX };
-    let mut req = alloc::format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: LingOS\r\n").into_bytes();
+    let mut req = alloc::format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: LingOS\r\n{extra}").into_bytes();
     if !body.is_empty() {
         req.extend_from_slice(alloc::format!("Content-Type: {content_type}\r\nContent-Length: {}\r\n", body.len()).as_bytes());
     }

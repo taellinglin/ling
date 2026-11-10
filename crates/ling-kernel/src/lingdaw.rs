@@ -169,6 +169,80 @@ impl TrackDoc {
     }
 }
 
+/// Load a LingStationX patch file (`type = synth`, `wave=0.66 sub=1 ...`,
+/// `fx ...` effect lines skipped) onto a track: its kind and its knobs, named
+/// the way the project keeps them (`filt_env` -> `filt env`).
+fn apply_patch(t: &mut TrackDoc, text: &str, path: &str) -> bool {
+    let mut kind = String::new();
+    let mut state: Vec<(String, f32)> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with("name") || line.starts_with("fx ") {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("type") {
+            kind = String::from(rest.trim().trim_start_matches('=').trim().split(' ').next().unwrap_or(""));
+            continue;
+        }
+        for tok in line.split_whitespace() {
+            if let Some((k, v)) = tok.split_once('=') {
+                if let Ok(v) = v.parse::<f32>() {
+                    let k = k.replace('_', " ");
+                    match state.iter_mut().find(|(n, _)| *n == k) {
+                        Some(slot) => slot.1 = v,
+                        None => state.push((k, v)),
+                    }
+                }
+            }
+        }
+    }
+    if state.is_empty() {
+        return false;
+    }
+    if !kind.is_empty() {
+        t.instrument = kind;
+    }
+    t.state = state;
+    t.patch = String::from(path);
+    true
+}
+
+/// The `.ling` patches in a folder as (display name, path): the file name
+/// without `.ling`, its kind prefix (`Chip_`) or GM number, `_` as spaces.
+fn patch_files(dir: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (name, is_dir, _) in crate::vfs::list(dir) {
+        let Some(stem) = name.strip_suffix(".ling") else { continue };
+        if is_dir {
+            continue;
+        }
+        let mut label = String::from(stem);
+        for pre in ["Chip_", "Cinema_", "Nova_", "Growl_", "Voice_", "Prism_"] {
+            if let Some(r) = label.strip_prefix(pre) {
+                label = String::from(r);
+            }
+        }
+        // "001 Acoustic Grand Piano"
+        if label.len() > 4 && label.as_bytes()[..3].iter().all(|b| b.is_ascii_digit()) && label.as_bytes()[3] == b' ' {
+            label = String::from(&label[4..]);
+        }
+        out.push((label.replace('_', " "), alloc::format!("{dir}/{name}")));
+    }
+    out
+}
+
+/// The presets an instrument has built in. On the PC the engine carries them;
+/// here they are the app's own patch folders for the instruments whose
+/// presets the chooser does not list as files.
+fn builtin_presets(kind: &str) -> Vec<(String, String)> {
+    match kind {
+        "chip" => patch_files("instruments/Chip"),
+        "cinema" => patch_files("instruments/Cinema"),
+        "nova" => patch_files("instruments/Nova"),
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 struct ProjectDoc {
     #[serde(default)]
@@ -1161,10 +1235,158 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             }
             UNIT
         },
-        b"daw_inst_parts" | b"daw_inst_presets" | b"daw_inst_categories" | b"daw_inst_plot" => list_from(Vec::new()),
+        // ── tracks: add, remove, duplicate, move ──
+        b"daw_track_add" => {
+            // (kind "synth"|"drums"|"audio"|..., optional patch path) -> new index
+            let kind = s(0);
+            let kind = if kind.is_empty() { String::from("synth") } else { kind };
+            let audio = kind == "audio";
+            let mut name = String::from(match kind.as_str() {
+                "drums" => "Drums",
+                "audio" => "Audio",
+                "chip" => "Chip",
+                "growl" => "Growl",
+                "voice" => "Voice",
+                "prism" => "Prism",
+                "pluck" => "Pluck",
+                "cinema" => "Cinema",
+                "nova" => "Nova",
+                _ => "Synth",
+            });
+            name.push_str(&alloc::format!(" {}", p.tracks.len() + 1));
+            const COLORS: [u32; 8] = [0x4F9DFF, 0xFF6B6B, 0x6BD968, 0xFFB648, 0xB57BFF, 0x4FD1C5, 0xFF7AC6, 0xE5E05A];
+            let mut t = TrackDoc {
+                name,
+                color: COLORS[p.tracks.len() % COLORS.len()],
+                kind: String::from(if audio { "audio" } else { "instrument" }),
+                instrument: if audio { String::new() } else { kind },
+                patch: String::new(),
+                level: 1.0,
+                pan: 0.0,
+                muted: false,
+                solo: false,
+                effects: Vec::new(),
+                clips: Vec::new(),
+                state: Vec::new(),
+                config: String::new(),
+            };
+            let path = s(1).replace('\\', "/");
+            if !audio && !path.is_empty() {
+                if let Some(bytes) = crate::vfs::read(&path) {
+                    apply_patch(&mut t, core::str::from_utf8(&bytes).unwrap_or(""), &path);
+                }
+            }
+            p.tracks.push(t);
+            d.dirty = true;
+            d.rev += 1;
+            num((p.tracks.len() - 1) as f64)
+        },
+        b"daw_track_remove" => {
+            if u(0) < p.tracks.len() {
+                p.tracks.remove(u(0));
+                d.dirty = true;
+                d.rev += 1;
+            }
+            UNIT
+        },
+        b"daw_track_dup" => {
+            // (i, with_clips) -> new index, right after the original
+            let Some(mut t) = p.tracks.get(u(0)).cloned() else { return Some(num(-1.0)) };
+            if n(1) < 0.5 {
+                t.clips.clear();
+            }
+            t.name.push_str(" copy");
+            let at = u(0) + 1;
+            p.tracks.insert(at, t);
+            d.dirty = true;
+            d.rev += 1;
+            num(at as f64)
+        },
+        b"daw_track_move" => {
+            // (i, delta) -> new index
+            let i = u(0);
+            let len = p.tracks.len();
+            if len == 0 || i >= len {
+                return Some(num(i as f64));
+            }
+            let j = (i as i64 + n(1) as i64).clamp(0, len as i64 - 1) as usize;
+            if i != j {
+                let t = p.tracks.remove(i);
+                p.tracks.insert(j, t);
+                d.dirty = true;
+                d.rev += 1;
+            }
+            num(j as f64)
+        },
+        b"daw_track_kind_drums" => boolean(track(p, u(0)).map(|t| t.instrument == "drums" || t.instrument == "drum").unwrap_or(false)),
+        // the track's sound as a patch file (a user preset)
+        b"daw_inst_save" => {
+            let Some(t) = track(p, u(0)) else { return Some(num(0.0)) };
+            let mut text = alloc::format!("# {} patch, saved on LingOS\nname = \"{}\"\ntype = {}\n", t.instrument, t.name, t.instrument);
+            for (k, v) in t.params() {
+                text.push_str(&alloc::format!("{}={:.4}\n", k.replace(' ', "_"), v));
+            }
+            num(crate::vfs::write(&s(1).replace('\\', "/"), text.as_bytes()) as i32 as f64)
+        },
+        b"daw_inst_info" => mk_str(""),
+        // ── instruments: switch the plugin, load a patch file, the built-in presets ──
+        b"daw_track_set_kind" => {
+            let Some(t) = p.tracks.get_mut(u(0)) else { return Some(num(0.0)) };
+            let kind = s(1);
+            if kind.is_empty() || t.is_audio() {
+                return Some(num(0.0));
+            }
+            t.instrument = kind;
+            t.state.clear();
+            t.patch = s(2);
+            d.dirty = true;
+            d.rev += 1;
+            num(1.0)
+        },
+        b"daw_inst_load" => {
+            let path = s(1).replace('\\', "/");
+            let ok = match (p.tracks.get_mut(u(0)), crate::vfs::read(&path)) {
+                (Some(t), Some(bytes)) if !t.is_audio() => apply_patch(t, core::str::from_utf8(&bytes).unwrap_or(""), &path),
+                _ => false,
+            };
+            if ok {
+                d.dirty = true;
+                d.rev += 1;
+            }
+            num(ok as i32 as f64)
+        },
+        b"daw_inst_presets" => {
+            let kind = track(p, u(0)).map(|t| t.instrument).unwrap_or_default();
+            list_from(builtin_presets(&kind).iter().map(|(name, _)| mk_str(name)).collect())
+        },
+        b"daw_inst_preset" => {
+            let want = s(1);
+            let kind = track(p, u(0)).map(|t| t.instrument).unwrap_or_default();
+            let found = builtin_presets(&kind).into_iter().find(|(name, _)| name.eq_ignore_ascii_case(&want)).or_else(|| {
+                // a sound asked for by name (the song generator's "Sitar"): any patch folder of the same kind
+                ["instruments/GM", "instruments/Electronic GM", "instruments"]
+                    .iter()
+                    .flat_map(|dir| patch_files(dir))
+                    .find(|(name, _)| name.eq_ignore_ascii_case(&want))
+            });
+            let ok = match (found, p.tracks.get_mut(u(0))) {
+                (Some((_, path)), Some(t)) => match crate::vfs::read(&path) {
+                    Some(bytes) => apply_patch(t, core::str::from_utf8(&bytes).unwrap_or(""), &path),
+                    None => false,
+                },
+                _ => false,
+            };
+            if ok {
+                d.dirty = true;
+                d.rev += 1;
+            }
+            boolean(ok)
+        },
+        b"daw_inst_categories" | b"daw_inst_parts" | b"daw_inst_plot" => list_from(Vec::new()),
+        b"daw_inst_preset_info" => mk_str(""),
         b"daw_inst_part" => num(0.0),
         b"daw_inst_ab_side" => num(-1.0),
-        b"daw_inst_select_part" | b"daw_inst_preset" | b"daw_inst_ab" | b"daw_inst_default" => UNIT,
+        b"daw_inst_select_part" | b"daw_inst_ab" | b"daw_inst_default" => UNIT,
         b"daw_inst_random" => boolean(false),
         // ── not on the Pi yet: theory analysis, sends / sidechains ──
         b"daw_th_keys" | b"daw_th_chords" | b"daw_th_phrases" | b"daw_th_roles" | b"daw_th_vocab" => list_from(Vec::new()),
@@ -1446,6 +1668,117 @@ struct Voice {
     lp: [f64; 2],
     noise: u32,
     env: f64,
+    sp: SynthP,
+}
+
+/// A track's knobs as the Pi voice uses them, read once at note-on. Every
+/// LingStationX instrument has its own knob names (Synth X "cutoff", Prism
+/// "cut", Nova "e1 a" ...); they map onto one subtractive voice with a
+/// character per instrument (Chip: bare pulse, Pluck: no sustain, Growl:
+/// driven, Voice: vibrato and breath, Cinema: noise).
+#[derive(Clone, Copy)]
+struct SynthP {
+    a: f64,
+    d: f64,
+    s: f64,
+    r: f64,
+    cutoff: f64,
+    reso: f64,
+    fenv: f64,
+    wave: f64,
+    duty: f64,
+    sub: f64,
+    detune: f64,
+    noise: f64,
+    drive: f64,
+    lfo_hz: f64,
+    lfo_cut: f64,
+    lfo_pitch: f64,
+    chip: bool,
+    /// drums: pitch and decay multipliers and level for the piece
+    tune: f64,
+    decay: f64,
+    level: f64,
+}
+
+fn synth_params(t: &TrackDoc, piece: Option<&str>) -> SynthP {
+    let ps = t.params();
+    let get = |names: &[&str], def: f64| -> f64 {
+        names.iter().find_map(|nm| ps.iter().find(|(n, _)| n == nm).map(|(_, v)| *v as f64)).unwrap_or(def).clamp(0.0, 1.0)
+    };
+    let secs = |x: f64, lo: f64, span: f64| lo + x * x * span;
+    let kind = t.instrument.as_str();
+    let mut p = SynthP {
+        a: secs(get(&["attack", "amp a", "e1 a"], 0.1), 0.002, 2.0),
+        d: secs(get(&["decay", "amp d", "e1 d"], 0.4), 0.03, 3.0),
+        s: get(&["sustain", "amp s", "e1 s"], 0.7),
+        r: secs(get(&["release", "amp r", "e1 r"], 0.3), 0.01, 3.0),
+        cutoff: get(&["cutoff", "cut", "bright"], 0.6),
+        reso: get(&["reso", "res"], 0.2),
+        fenv: get(&["filt env", "fenv"], 0.3),
+        wave: get(&["wave", "a wave"], 0.0),
+        duty: 0.5,
+        sub: get(&["sub", "sub level"], 0.3),
+        detune: get(&["detune", "a det"], 0.15),
+        noise: get(&["noise", "breath"], 0.0),
+        drive: get(&["drive", "drv"], 0.0),
+        lfo_hz: secs(get(&["lfo rate", "vib rate"], 0.3), 0.1, 12.0),
+        lfo_cut: get(&["lfo cut"], 0.0),
+        lfo_pitch: get(&["lfo pitch", "vib depth"], 0.0),
+        chip: false,
+        tune: 1.0,
+        decay: 1.0,
+        level: 1.0,
+    };
+    match kind {
+        "chip" => {
+            p.chip = true;
+            p.wave = 1.0;
+            p.duty = 0.08 + 0.42 * get(&["duty"], 0.5);
+            p.sub = 0.0;
+            p.detune = 0.0;
+            p.a = 0.002;
+        },
+        "pluck" => {
+            p.s = 0.0;
+            p.d = secs(get(&["str decay", "decay"], 0.4), 0.08, 1.5);
+            p.fenv = p.fenv.max(0.5);
+        },
+        "growl" => {
+            p.drive = p.drive.max(0.4);
+            p.detune = p.detune.max(0.5);
+            p.wave = 0.3;
+        },
+        "voice" => {
+            p.cutoff = 0.45;
+            p.reso = 0.55;
+            p.lfo_hz = 4.0 + 3.0 * get(&["vib rate"], 0.5);
+            p.lfo_pitch = get(&["vib depth"], 0.3) * 1.5;
+            p.noise = get(&["breath"], 0.2) * 0.3;
+            p.sub = 0.0;
+        },
+        "cinema" => {
+            p.noise = 0.5 + 0.5 * get(&["noise"], 0.5);
+            p.r = secs(get(&["length"], 0.5), 0.3, 4.0);
+            p.a = p.a.max(0.02);
+        },
+        _ => {},
+    }
+    // a string patch (GM guitars, harps) plucks
+    if get(&["string"], 0.0) > 0.5 {
+        p.s = 0.0;
+        p.d = secs(get(&["str decay"], 0.4), 0.08, 2.0);
+    }
+    if let Some(pc) = piece {
+        let g = |f: &str, def: f64| {
+            let key = alloc::format!("{pc}.{f}");
+            ps.iter().find(|(n, _)| *n == key).map(|(_, v)| *v as f64).unwrap_or(def).clamp(0.0, 1.0)
+        };
+        p.tune = libm::pow(2.0, (g("tune", 0.5) - 0.5) * 1.5);
+        p.decay = libm::pow(2.0, (0.5 - g("decay", 0.5)) * 2.5);
+        p.level = g("level", 0.8) / 0.8;
+    }
+    p
 }
 
 struct Audio {
@@ -1506,12 +1839,24 @@ fn drum_kind(key: u8) -> (VKind, f64) {
     }
 }
 
-fn note_on(a: &mut Audio, track: usize, drums: bool, n: &NoteDoc, off_beat: f64) {
+fn note_on(a: &mut Audio, track: usize, t: &TrackDoc, drums: bool, n: &NoteDoc, off_beat: f64) {
     let (kind, freq) = if drums {
         drum_kind(n.key)
     } else {
         (VKind::Synth, 440.0 * libm::pow(2.0, (n.key as f64 - 69.0) / 12.0))
     };
+    let piece = match kind {
+        VKind::Synth => None,
+        VKind::Kick => Some("kick"),
+        VKind::Snare => Some("snare"),
+        VKind::Hat => Some("closed hat"),
+        VKind::OpenHat => Some("open hat"),
+        VKind::Tom => Some("tom"),
+        VKind::Cymbal => Some("crash"),
+        VKind::Click => Some("clap"),
+    };
+    let sp = synth_params(t, piece);
+    let freq = if drums { freq * sp.tune } else { freq };
     let v = Voice {
         track,
         kind,
@@ -1526,8 +1871,9 @@ fn note_on(a: &mut Audio, track: usize, drums: bool, n: &NoteDoc, off_beat: f64)
         off_beat,
         phase: [0.0; 3],
         lp: [0.0; 2],
-        noise: 0x1234_5678 ^ (n.key as u32 * 2654435761),
+        noise: 0x1234_5678 ^ (n.key as u32).wrapping_mul(2654435761),
         env: 0.0,
+        sp,
     };
     if a.voices.len() >= MAX_VOICES {
         // steal the oldest released voice, else the oldest
@@ -1549,36 +1895,57 @@ fn noise(s: &mut u32) -> f64 {
 
 /// One sample of a voice; false once it has died away.
 fn voice_sample(v: &mut Voice, dt: f64) -> Option<f64> {
-    v.t += dt;
+    // a drum's kit decay plays its envelope faster or slower
+    v.t += if matches!(v.kind, VKind::Synth) { dt } else { dt * v.sp.decay };
     if !v.gate {
         v.rel_t += dt;
     }
     let s = match v.kind {
         VKind::Synth => {
-            // ADSR: 8ms attack, decay to 0.7, 250ms release
-            let target = if v.gate {
-                if v.t < 0.008 { v.t / 0.008 } else { 0.7 + 0.3 * libm::exp(-(v.t - 0.008) * 6.0) }
+            let p = v.sp;
+            if v.gate {
+                v.env = if v.t < p.a { v.t / p.a } else { p.s + (1.0 - p.s) * libm::exp(-(v.t - p.a) / p.d) };
             } else {
-                v.env * libm::exp(-dt / 0.08)
-            };
-            v.env = target;
-            if !v.gate && v.env < 0.0005 {
+                v.env *= libm::exp(-dt * 3.0 / p.r);
+            }
+            // released, or a pluck that has rung out
+            if v.env < 0.0005 && (!v.gate || (p.s < 0.001 && v.t > p.a)) {
                 return None;
             }
+            let lfo = libm::sin(2.0 * core::f64::consts::PI * p.lfo_hz * v.t);
+            let f = v.freq * (1.0 + p.lfo_pitch * 0.02 * lfo);
+            let det = 1.0 + p.detune * 0.012;
             let mut osc = 0.0;
-            for (i, det) in [1.0f64, 1.0058, 0.5].iter().enumerate() {
-                v.phase[i] += v.freq * det * dt;
+            for (i, m) in [1.0f64, det].iter().enumerate() {
+                v.phase[i] += f * m * dt;
                 v.phase[i] -= libm::floor(v.phase[i]);
-                osc += if i < 2 { 2.0 * v.phase[i] - 1.0 } else if v.phase[i] < 0.5 { 0.6 } else { -0.6 };
+                let ph = v.phase[i];
+                let pulse = if ph < p.duty { 1.0 } else { -1.0 };
+                osc += (2.0 * ph - 1.0) * (1.0 - p.wave) + pulse * p.wave;
             }
-            osc *= 0.33;
-            // two-pole low-pass: cutoff follows the note's cutoff + envelope
-            let fc = (300.0 + 6000.0 * v.cutoff * v.cutoff + 2500.0 * v.env).min(16_000.0);
-            let g = 1.0 - libm::exp(-2.0 * core::f64::consts::PI * fc * dt);
-            let fb = v.reso * 0.6;
-            v.lp[0] += g * (osc - v.lp[0] - fb * (v.lp[1] - v.lp[0]));
-            v.lp[1] += g * (v.lp[0] - v.lp[1]);
-            v.lp[1] * v.env
+            osc *= 0.5;
+            v.phase[2] += f * 0.5 * dt;
+            v.phase[2] -= libm::floor(v.phase[2]);
+            osc += p.sub * 0.6 * if v.phase[2] < 0.5 { 1.0 } else { -1.0 };
+            if p.noise > 0.0 {
+                osc += p.noise * 0.6 * noise(&mut v.noise);
+            }
+            if p.drive > 0.0 {
+                osc = libm::tanh(osc * (1.0 + p.drive * 5.0));
+            }
+            if p.chip {
+                osc * 0.45 * v.env
+            } else {
+                // two-pole low-pass: the track's cutoff (+ the note's), its envelope and LFO
+                let cut = (p.cutoff + (v.cutoff - 0.5) + p.lfo_cut * 0.3 * lfo).clamp(0.0, 1.0);
+                let fe = p.fenv * libm::exp(-v.t / (0.05 + p.d * 0.5));
+                let fc = ((60.0 + 14_000.0 * cut * cut) * (1.0 + 4.0 * fe)).min(18_000.0);
+                let g = 1.0 - libm::exp(-2.0 * core::f64::consts::PI * fc * dt);
+                let fb = (p.reso + (v.reso - 0.5) * 0.5).clamp(0.0, 1.0) * 0.85;
+                v.lp[0] += g * (osc - v.lp[0] - fb * (v.lp[1] - v.lp[0]));
+                v.lp[1] += g * (v.lp[0] - v.lp[1]);
+                v.lp[1] * v.env
+            }
         },
         VKind::Kick => {
             let f = v.freq + 110.0 * libm::exp(-v.t * 30.0);
@@ -1632,7 +1999,8 @@ fn voice_sample(v: &mut Voice, dt: f64) -> Option<f64> {
             (libm::sin(2.0 * core::f64::consts::PI * v.phase[0]) * 0.5 + noise(&mut v.noise) * 0.3) * e
         },
     };
-    Some(s * (0.35 + 0.65 * v.vel))
+    let lvl = if matches!(v.kind, VKind::Synth) { 1.0 } else { v.sp.level };
+    Some(s * lvl * (0.35 + 0.65 * v.vel))
 }
 
 /// Schedule every note starting in [b0, b1) on audible tracks.
@@ -1663,7 +2031,7 @@ fn schedule(a: &mut Audio, p: &ProjectDoc, b0: f64, b1: f64) {
                         continue;
                     }
                     let off_beat = (on + n.len.max(0.02)).min(c.end());
-                    note_on(a, ti, drums, n, off_beat);
+                    note_on(a, ti, t, drums, n, off_beat);
                 }
             }
         }

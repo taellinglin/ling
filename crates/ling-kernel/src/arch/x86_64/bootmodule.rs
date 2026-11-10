@@ -12,6 +12,35 @@ extern "C" {
     static mb2_info_ptr: u32;
 }
 
+/// The Multiboot2 boot command line (tag type 1): GRUB's kernel arguments, or
+/// lingboot's `lingboot bootdev=<kind> bootpart=gpt:<guid hex>` naming the
+/// partition it was started from (`fs::disks::boot_disk`).
+pub fn cmdline() -> Option<alloc::string::String> {
+    unsafe {
+        let info_ptr = ptr::read_volatile(&raw const mb2_info_ptr);
+        if info_ptr == 0 {
+            return None;
+        }
+        let total_size = ptr::read_unaligned(info_ptr as *const u32);
+        let mut offset: u32 = 8;
+        while offset + 8 <= total_size {
+            let tag_ptr = (info_ptr + offset) as *const u32;
+            let tag_type = ptr::read_unaligned(tag_ptr);
+            let tag_size = ptr::read_unaligned(tag_ptr.add(1));
+            if tag_type == 0 || tag_size < 8 {
+                break;
+            }
+            if tag_type == 1 {
+                let s = core::slice::from_raw_parts((info_ptr + offset + 8) as *const u8, (tag_size - 8) as usize);
+                let n = s.iter().position(|&b| b == 0).unwrap_or(s.len());
+                return Some(alloc::string::String::from_utf8_lossy(&s[..n]).into_owned());
+            }
+            offset += (tag_size + 7) & !7;
+        }
+        None
+    }
+}
+
 /// The first Multiboot2 module's (start, end) physical address range, if
 /// `grub.cfg` loaded one via `module2`. `None` if there's no Multiboot2
 /// info at all (e.g. the disk-boot path, which never sets `mb2_info_ptr`),

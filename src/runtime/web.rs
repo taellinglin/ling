@@ -284,6 +284,74 @@ async fn isolate_online(req: Request, next: axum::middleware::Next) -> Response 
     r
 }
 
+/// The request's hostname, lower-cased, port stripped: the `Host` header
+/// (HTTP/1.1) or the URI authority (HTTP/2). "" if neither is present.
+fn request_host(req: &Request) -> String {
+    let raw = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| req.uri().host())
+        .unwrap_or("");
+    // Strip a trailing `:port`, but not the colons inside a bare IPv6 literal.
+    let host = match raw.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => raw,
+    };
+    host.to_ascii_lowercase()
+}
+
+/// `http_vhost`: a request for one of the registered hostnames is either
+/// redirected (when the target is an `http(s)://` URL) or answered
+/// straight from that host's directory (served at the root, byte for byte),
+/// before the `http_static` prefixes and the Ling routes ever see it. A miss
+/// answers 404 with the directory's own `404.html` when there is one (mdBook
+/// and most static-site generators emit it).
+async fn vhost_static(
+    State(vhosts): State<std::sync::Arc<Vec<(String, String)>>>,
+    req: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let host = request_host(&req);
+    let Some((_, dir)) = vhosts.iter().find(|(h, _)| *h == host) else {
+        return next.run(req).await;
+    };
+    // A URL target means "this host moved": 301 to the same path and query
+    // under that base (docs.example.org/a.html -> example.org/docs/a.html).
+    if dir.starts_with("http://") || dir.starts_with("https://") {
+        let mut to = format!("{}{}", dir.trim_end_matches('/'), req.uri().path());
+        if let Some(q) = req.uri().query() {
+            to.push('?');
+            to.push_str(q);
+        }
+        return match axum::http::HeaderValue::from_str(&to) {
+            Ok(loc) => {
+                let mut r = StatusCode::MOVED_PERMANENTLY.into_response();
+                r.headers_mut().insert(axum::http::header::LOCATION, loc);
+                r
+            },
+            Err(_) => (StatusCode::BAD_REQUEST, "bad redirect target").into_response(),
+        };
+    }
+    let mut serve = tower_http::services::ServeDir::new(dir);
+    match serve.try_call(req).await {
+        Ok(resp) if resp.status() == StatusCode::NOT_FOUND => {
+            let page = std::path::Path::new(dir).join("404.html");
+            match tokio::fs::read(&page).await {
+                Ok(bytes) => (
+                    StatusCode::NOT_FOUND,
+                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    bytes,
+                )
+                    .into_response(),
+                Err(_) => resp.map(axum::body::Body::new),
+            }
+        },
+        Ok(resp) => resp.map(axum::body::Body::new),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("vhost: {e}")).into_response(),
+    }
+}
+
 async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
@@ -426,10 +494,15 @@ pub enum TlsMode {
 /// `tower_http::services::ServeDir`, so binary files (fonts, images, zips)
 /// never have to round-trip through the `String`-typed `Value`/`PendingRequest`
 /// bridge that `.ling` route handlers use.
+///
+/// `vhosts` is `(hostname, disk_dir)` pairs registered via `http_vhost` — a
+/// request whose Host names one of them is served from that directory at the
+/// root, ahead of `static_dirs` and the Ling routes (see `vhost_static`).
 pub fn spawn_server(
     host: String,
     port: u16,
     static_dirs: Vec<(String, String)>,
+    vhosts: Vec<(String, String)>,
     tls: TlsMode,
 ) -> std::sync::mpsc::Receiver<PendingRequest> {
     let (tx, rx) = std::sync::mpsc::channel::<PendingRequest>();
@@ -464,6 +537,16 @@ pub fn spawn_server(
                 .layer(DefaultBodyLimit::disable())
                 .layer(axum::middleware::from_fn(isolate_online))
                 .with_state(state);
+            // Outermost layer, so a vhost request never reaches the prefixes
+            // or the Ling routes.
+            let router = if vhosts.is_empty() {
+                router
+            } else {
+                router.layer(axum::middleware::from_fn_with_state(
+                    std::sync::Arc::new(vhosts),
+                    vhost_static,
+                ))
+            };
             // ling-http's `dev-certs` feature is unconditionally enabled on
             // its dependency line in the root Cargo.toml (whenever this
             // `web` feature is on, so is that one), so serve_dev_tls is
@@ -583,6 +666,33 @@ impl AsyncJobs {
             jobs.lock().unwrap().insert(job_id, Some(text));
         });
 
+        id
+    }
+
+    /// Starts a GET request in the background; returns a job id immediately.
+    /// The `http_get_async` twin of `start_post` — a page fetch that must not
+    /// block the caller's loop (Horizon polls while it keeps rendering).
+    pub fn start_get(&self, url: String) -> String {
+        let id = {
+            use rand::RngCore;
+            let mut buf = [0u8; 16];
+            rand::rngs::OsRng.fill_bytes(&mut buf);
+            buf.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        };
+        self.0.lock().unwrap().insert(id.clone(), None);
+        let jobs = self.0.clone();
+        let job_id = id.clone();
+        async_runtime_handle().spawn(async move {
+            let client = reqwest::Client::new();
+            let text = match client.get(&url).send().await {
+                Ok(resp) => resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| format!("ERROR: body read failed: {e}")),
+                Err(e) => format!("ERROR: {}", e.to_string().replace('"', "'")),
+            };
+            jobs.lock().unwrap().insert(job_id, Some(text));
+        });
         id
     }
 
@@ -914,7 +1024,7 @@ pub fn get_bytes_blocking(url: &str, max: usize) -> Result<(Vec<u8>, String), St
 /// `http_serve`/`spawn_server`'s own server runtime is running — so
 /// `http_post_async` also works from a plain script, not just inside a route
 /// handler. Started lazily on first use and kept alive for the process lifetime.
-fn async_runtime_handle() -> tokio::runtime::Handle {
+pub(crate) fn async_runtime_handle() -> tokio::runtime::Handle {
     static HANDLE: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
     HANDLE
         .get_or_init(|| {

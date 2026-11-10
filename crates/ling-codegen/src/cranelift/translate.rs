@@ -31,60 +31,78 @@ pub(crate) fn build_function_body(
     ctx: &TransCtx,
 ) {
     let vars = ctx.vars;
-    let pred_count = count_predecessors(func);
+    let mut pred_count = count_predecessors(func);
     let mut sealed = vec![false; func.basic_blocks.len()];
     let mut filled_pred = vec![0u32; func.basic_blocks.len()];
     let fusion = branchfuse::FunctionFusion::build(func, ctx.nt);
 
+    // The prologue lives in its own entry block that jumps to MIR block 0.
+    // MIR block 0 can itself be a branch target (TailCallOpt lowers a
+    // self-recursive tail call to `goto bb0`), and Cranelift forbids edges
+    // into the entry block; folding the prologue into bb0 would also re-run
+    // it — re-defining parameters from the original incoming arguments —
+    // on every loop-back.
+    let entry = builder.create_block();
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    builder.append_block_params_for_function_params(entry);
+    let params: Vec<Value> = builder.block_params(entry).to_vec();
+    for (j, val) in params.iter().enumerate() {
+        if let Some(&var) = vars.get(&Local(j + 1)) {
+            // The ABI always passes the boxed representation (callers
+            // don't know the callee's internal Int-vs-Boxed choice
+            // for its own parameters — see Rvalue::Call in
+            // translate_rvalue, which always emits boxed arguments).
+            // If numtype proved this parameter integral, the rest of
+            // the function body reads it raw (translate_op_int's
+            // `local_is_int` case skips unboxing), so it must be
+            // unboxed here at entry to match, not left as the
+            // incoming boxed bit pattern.
+            let stored = if ctx.nt.local_is_int(ctx.fname, j + 1) {
+                boxed_to_int(builder, *val)
+            } else {
+                *val
+            };
+            builder.def_var(var, stored);
+        }
+    }
+    // LING_PROFILE_FN: function-entry hook (JIT only; see fnprof.rs)
+    if let Some(id) = super::fnprof::current() {
+        if let Some(&fr) = ctx.runtime_refs.get("__ling_fn_enter") {
+            let v = builder.ins().iconst(types::I64, id);
+            builder.ins().call(fr, &[v]);
+        }
+    }
+    if ctx.frees {
+        // Ownership frees (TransCtx::frees): start every potentially
+        // boxed non-parameter local as unit so the releases emitted on
+        // reassignment and at Return can read any local on any path —
+        // releasing unit is a no-op. Parameters were just defined
+        // above; integer locals are never touched by retain/release.
+        let unit = builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64);
+        if !ctx.nt.local_is_int(ctx.fname, 0) {
+            if let Some(&var) = ctx.vars.get(&Local(0)) {
+                builder.def_var(var, unit);
+            }
+        }
+        for &l in ctx.boxed_sweep {
+            if l > func.arg_count {
+                if let Some(&var) = ctx.vars.get(&Local(l)) {
+                    builder.def_var(var, unit);
+                }
+            }
+        }
+    }
+    builder.ins().jump(blocks[0], &[]);
+    pred_count[0] += 1;
+    filled_pred[0] += 1;
+    if filled_pred[0] == pred_count[0] {
+        builder.seal_block(blocks[0]);
+        sealed[0] = true;
+    }
+
     for bi in 0..func.basic_blocks.len() {
         builder.switch_to_block(blocks[bi]);
-        if bi == 0 && !sealed[bi] {
-            builder.seal_block(blocks[bi]);
-            sealed[bi] = true;
-        }
-        if bi == 0 {
-            builder.append_block_params_for_function_params(blocks[bi]);
-            let params: Vec<Value> = builder.block_params(blocks[bi]).to_vec();
-            for (j, val) in params.iter().enumerate() {
-                if let Some(&var) = vars.get(&Local(j + 1)) {
-                    // The ABI always passes the boxed representation (callers
-                    // don't know the callee's internal Int-vs-Boxed choice
-                    // for its own parameters — see Rvalue::Call in
-                    // translate_rvalue, which always emits boxed arguments).
-                    // If numtype proved this parameter integral, the rest of
-                    // the function body reads it raw (translate_op_int's
-                    // `local_is_int` case skips unboxing), so it must be
-                    // unboxed here at entry to match, not left as the
-                    // incoming boxed bit pattern.
-                    let stored = if ctx.nt.local_is_int(ctx.fname, j + 1) {
-                        boxed_to_int(builder, *val)
-                    } else {
-                        *val
-                    };
-                    builder.def_var(var, stored);
-                }
-            }
-            if ctx.frees {
-                // Ownership frees (TransCtx::frees): start every potentially
-                // boxed non-parameter local as unit so the releases emitted on
-                // reassignment and at Return can read any local on any path —
-                // releasing unit is a no-op. Parameters were just defined
-                // above; integer locals are never touched by retain/release.
-                let unit = builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64);
-                if !ctx.nt.local_is_int(ctx.fname, 0) {
-                    if let Some(&var) = ctx.vars.get(&Local(0)) {
-                        builder.def_var(var, unit);
-                    }
-                }
-                for &l in ctx.boxed_sweep {
-                    if l > func.arg_count {
-                        if let Some(&var) = ctx.vars.get(&Local(l)) {
-                            builder.def_var(var, unit);
-                        }
-                    }
-                }
-            }
-        }
 
         // A planned branch fusion absorbs its condition's defining statements
         // (a suffix of this block); they are emitted inside the terminator.
@@ -321,7 +339,11 @@ pub(crate) fn release_const_str(
 /// (`__ling_list_push` / `__ling_list_set`), which CONSUME their list
 /// argument's box — the allocation is recycled into the result. Mirrors the
 /// alias arms in `emit_builtin_call`, including their arity guards.
-pub(crate) fn consumes_list_arg0(name: &str, argc: usize) -> bool {
+/// True for the builtins whose JIT shim consumes (recycles) their first list
+/// argument in place: the `bind x = list_push(x, …)` accumulator family. Public
+/// because the AST→MIR lowering uses the same predicate to fuse that pattern's
+/// call destination onto `x`'s own local, which is what lets the recycle fire.
+pub fn consumes_list_arg0(name: &str, argc: usize) -> bool {
     let push = matches!(
         name,
         "list_push"
@@ -1320,6 +1342,13 @@ pub(crate) fn emit_builtin_call(
     // skips releasing dest's old handle — see translate_stmt).
     recycled_self: bool,
 ) -> Value {
+    // Localized math names (사인, 正弦, ปัดลง, …) take the same native fast paths
+    // as the English ones below instead of the generic builtin dispatcher — a
+    // game written in Korean calls 사인/코사인/내림 ~20k times a frame.
+    let name = match canonical_math_name(&name) {
+        Some(en) => en.to_string(),
+        None => name,
+    };
     let builtin_gvs = ctx.builtin_gvs;
     let runtime_refs = ctx.runtime_refs;
     // Fast-path for commonly-used builtins with direct JIT implementations
@@ -1342,6 +1371,37 @@ pub(crate) fn emit_builtin_call(
         "cos" => return unbox_f64_or_call(builder, args, "__ling_cos", ctx),
         "sqrt" => return unbox_f64_or_call(builder, args, "__ling_sqrt", ctx),
         "abs" => return unbox_f64_or_call(builder, args, "__ling_abs", ctx),
+        // trunc/floor: integer division and bit extraction in ling programs
+        // (no bitwise ops) make these the hottest builtins of all — a number
+        // argument becomes one native instruction; anything else keeps the
+        // exact interpreter semantics through the generic dispatcher.
+        "trunc" | "floor" if args.len() == 1 => {
+            let val = args[0];
+            let is_num = emit_is_number(builder, val);
+            let block_fast = builder.create_block();
+            let block_slow = builder.create_block();
+            let block_merge = builder.create_block();
+            let res_var = builder.declare_var(types::I64);
+            builder.ins().brif(is_num, block_fast, &[], block_slow, &[]);
+
+            builder.switch_to_block(block_fast);
+            let f = i64_as_f64(builder, val);
+            let r = if name == "trunc" { builder.ins().trunc(f) } else { builder.ins().floor(f) };
+            let ri = f64_as_i64(builder, r);
+            builder.def_var(res_var, ri);
+            builder.ins().jump(block_merge, &[]);
+            builder.seal_block(block_fast);
+
+            builder.switch_to_block(block_slow);
+            let g = emit_generic_builtin(&name, &args, builder, ctx);
+            builder.def_var(res_var, g);
+            builder.ins().jump(block_merge, &[]);
+            builder.seal_block(block_slow);
+
+            builder.switch_to_block(block_merge);
+            builder.seal_block(block_merge);
+            return builder.use_var(res_var);
+        },
         "floor" => return unbox_f64_or_call(builder, args, "__ling_floor", ctx),
         "ceil" => return unbox_f64_or_call(builder, args, "__ling_ceil", ctx),
         "round" => return unbox_f64_or_call(builder, args, "__ling_round", ctx),
@@ -1349,7 +1409,7 @@ pub(crate) fn emit_builtin_call(
         {
             return emit_runtime_call0(builder, "__ling_time_now", runtime_refs);
         },
-        "len" | "str_len" | "ความยาว" | "长度" | "長さ" | "길이" => {
+        "len" | "str_len" | "list_len" | "ความยาว" | "长度" | "長さ" | "길이" => {
             if !args.is_empty() {
                 return emit_runtime_call1(builder, "__ling_str_len", args[0], runtime_refs);
             } else {
@@ -1432,8 +1492,15 @@ pub(crate) fn emit_builtin_call(
         },
         _ => {},
     }
-    // Fallback: dispatch through __ling_builtin for any builtin not handled above
-    if let Some(&name_gv) = builtin_gvs.get(&name) {
+    let _ = builtin_gvs;
+    emit_generic_builtin(&name, &args, builder, ctx)
+}
+
+/// Dispatch through `__ling_builtin` (the interpreter's builtin table).
+fn emit_generic_builtin(name: &str, args: &[Value], builder: &mut FunctionBuilder, ctx: &TransCtx) -> Value {
+    let builtin_gvs = ctx.builtin_gvs;
+    let runtime_refs = ctx.runtime_refs;
+    if let Some(&name_gv) = builtin_gvs.get(name) {
         let name_ptr = builder.ins().symbol_value(types::I64, name_gv);
         let name_len = builder.ins().iconst(types::I64, name.len() as i64);
         let num_args = args.len();
@@ -1589,10 +1656,50 @@ pub(crate) fn translate_terminator(
                     emit_release(builder, ctx, h);
                 }
             }
+            if let Some(id) = super::fnprof::current() {
+                if let Some(&fr) = ctx.runtime_refs.get("__ling_fn_exit") {
+                    let v = builder.ins().iconst(types::I64, id);
+                    builder.ins().call(fr, &[v]);
+                }
+            }
             builder.ins().return_(&[ret]);
         },
         TerminatorKind::Unreachable => {
             builder.ins().trap(TrapCode::INTEGER_OVERFLOW);
         },
+    }
+}
+
+/// English name of a localized math builtin that has a JIT fast path, if `name`
+/// is one of its aliases. The alias lists mirror the runtime's match arms in
+/// src/runtime/mod.rs (all 12 languages), so the generic fallback inside the
+/// fast paths still dispatches to the same builtin.
+pub(crate) fn canonical_math_name(name: &str) -> Option<&'static str> {
+    const TABLE: &[(&str, &[&str])] = &[
+        ("sin", &["ไซน์", "正弦", "サイン", "사인", "سینوس", "جا", "סינוס", "سائن", "sinus", "синус"]),
+        ("cos", &["โคไซน์", "余弦", "コサイン", "코사인", "کسینوس", "جتا", "קוסינוס", "کوسائن", "cosinus", "kosinus", "косинус"]),
+        ("sqrt", &["รากที่สอง", "平方根", "根", "제곱근", "جذر", "שורש", "racine_carrée", "quadratwurzel", "корень"]),
+        ("abs", &["ค่าสัมบูรณ์", "绝对值", "绝对", "絶対値", "절댓값", "절대값", "قدرمطلق", "مطلق", "ערך_מוחלט", "مطلق_قدر", "valeur_absolue", "betrag", "модуль_числа"]),
+        ("floor", &["ปัดลง", "向下取整", "下整", "床関数", "내림", "کف", "أرضية", "רצפה", "فرش", "plancher", "abrunden", "вниз"]),
+        ("ceil", &["ปัดขึ้น", "向上取整", "上整", "天井関数", "올림", "سقف", "תקרה", "چھت", "plafond", "aufrunden", "вверх"]),
+        ("round", &["ปัดเศษ", "四舍五入", "四舍", "四捨五入", "반올림", "گرد_کردن", "تقريب", "עיגול", "گول", "arrondir", "runden", "округлить"]),
+        ("trunc", &["int", "ตัดทศนิยม", "取整", "整数化", "整数", "截整", "정수화", "정수", "切り捨て", "버림", "برش", "اقتطاع", "קיטום", "کٹائی", "tronquer", "abschneiden", "усечь"]),
+    ];
+    if name.is_ascii() && !matches!(name, "int" | "sinus" | "cosinus" | "kosinus" | "quadratwurzel" | "betrag" | "plancher" | "abrunden" | "plafond" | "aufrunden" | "arrondir" | "runden" | "tronquer" | "abschneiden" | "valeur_absolue") {
+        return None; // fast exit for the (ASCII) English names and everything else
+    }
+    TABLE.iter().find(|(_, al)| al.contains(&name)).map(|(en, _)| *en)
+}
+
+#[cfg(test)]
+mod math_alias_tests {
+    #[test]
+    fn localized_math_names_map_to_english() {
+        assert_eq!(super::canonical_math_name("사인"), Some("sin"));
+        assert_eq!(super::canonical_math_name("코사인"), Some("cos"));
+        assert_eq!(super::canonical_math_name("내림"), Some("floor"));
+        assert_eq!(super::canonical_math_name("int"), Some("trunc"));
+        assert_eq!(super::canonical_math_name("sin"), None);
+        assert_eq!(super::canonical_math_name("st_get"), None);
     }
 }

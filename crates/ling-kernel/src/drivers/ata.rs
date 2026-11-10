@@ -32,6 +32,8 @@ fn lock() {
     unsafe {
         while BUS_LOCK {
             crate::proc::sched::yield_now();
+            // the holder may be a green thread that needs main's CPU to finish
+            crate::coro::yield_now();
         }
         BUS_LOCK = true;
     }
@@ -85,14 +87,33 @@ fn wait_drq() -> Result<(), ()> {
 /// `buf`. Primary bus, master drive only — this is a "basic" kernel with
 /// one disk, not a general ATA stack.
 pub fn read_sector(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
+    crate::kstats::disk_rd(SECTOR_SIZE);
     lock();
     let r = read_sector_locked(lba, buf);
     unlock();
     r
 }
 
+/// A failed command, said out loud: which step, which sector, and the drive's
+/// status byte (0x50 = ready, 0x01 bit = error, 0x80 bit = still busy, 0x00 /
+/// 0xFF = no drive answering). Only on failure, so it cannot flood the log, but a
+/// disk that silently refuses writes used to look like a filesystem bug.
+fn fail(what: &[u8], lba: u32) -> Result<(), ()> {
+    let st = unsafe { inb(STATUS_COMMAND) };
+    crate::console_write(b"ata: ");
+    crate::console_write(what);
+    crate::console_write(b" at sector ");
+    crate::print_decimal(lba as u64);
+    crate::console_write(b", status ");
+    crate::print_decimal(st as u64);
+    crate::console_write(b"\n");
+    Err(())
+}
+
 fn read_sector_locked(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
-    wait_ready()?;
+    if wait_ready().is_err() {
+        return fail(b"read: drive not ready", lba);
+    }
     unsafe {
         outb(DRIVE_HEAD, 0xE0 | ((lba >> 24) & 0x0F) as u8);
         outb(ERROR_FEATURES, 0x00);
@@ -102,8 +123,12 @@ fn read_sector_locked(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
         outb(LBA_HIGH, ((lba >> 16) & 0xFF) as u8);
         outb(STATUS_COMMAND, CMD_READ_SECTORS);
     }
-    wait_ready()?;
-    wait_drq()?;
+    if wait_ready().is_err() {
+        return fail(b"read: no completion after the command", lba);
+    }
+    if wait_drq().is_err() {
+        return fail(b"read: no data request", lba);
+    }
     unsafe { insw(DATA, buf.as_mut_ptr() as *mut u16, SECTOR_SIZE / 2) };
     Ok(())
 }
@@ -113,6 +138,7 @@ fn read_sector_locked(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
 /// not just sitting in a volatile cache — matters a lot once this is doing
 /// crash-consistent, content-addressed storage).
 pub fn write_sector(lba: u32, buf: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
+    crate::kstats::disk_wr(SECTOR_SIZE);
     lock();
     let r = write_sector_locked(lba, buf);
     unlock();
@@ -120,7 +146,9 @@ pub fn write_sector(lba: u32, buf: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
 }
 
 fn write_sector_locked(lba: u32, buf: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
-    wait_ready()?;
+    if wait_ready().is_err() {
+        return fail(b"write: drive not ready", lba);
+    }
     unsafe {
         outb(DRIVE_HEAD, 0xE0 | ((lba >> 24) & 0x0F) as u8);
         outb(ERROR_FEATURES, 0x00);
@@ -130,12 +158,20 @@ fn write_sector_locked(lba: u32, buf: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
         outb(LBA_HIGH, ((lba >> 16) & 0xFF) as u8);
         outb(STATUS_COMMAND, CMD_WRITE_SECTORS);
     }
-    wait_ready()?;
-    wait_drq()?;
+    if wait_ready().is_err() {
+        return fail(b"write: no response to the command", lba);
+    }
+    if wait_drq().is_err() {
+        return fail(b"write: no data request", lba);
+    }
     unsafe { outsw(DATA, buf.as_ptr() as *const u16, SECTOR_SIZE / 2) };
-    wait_ready()?;
+    if wait_ready().is_err() {
+        return fail(b"write: did not finish", lba);
+    }
     unsafe { outb(STATUS_COMMAND, CMD_CACHE_FLUSH) };
-    wait_ready()?;
+    if wait_ready().is_err() {
+        return fail(b"write: cache flush failed", lba);
+    }
     Ok(())
 }
 

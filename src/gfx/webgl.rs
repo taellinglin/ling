@@ -192,6 +192,12 @@ pub fn init_canvas(canvas: web_sys::OffscreenCanvas) {
     });
 }
 
+/// Run `f` with the WebGL2 context; `None` until `init_canvas` has run.
+#[cfg(feature = "gl-web")]
+pub(crate) fn with_ctx<R>(f: impl FnOnce(&Gl) -> R) -> Option<R> {
+    STATE.with(|cell| cell.borrow().as_ref().map(|s| f(&s.ctx)))
+}
+
 /// Return the current canvas backing-store dimensions.
 pub fn canvas_size() -> (u32, u32) {
     STATE.with(|cell| {
@@ -339,6 +345,41 @@ pub fn flush(fill_r: f32, fill_g: f32, fill_b: f32, width: usize, height: usize)
     });
 }
 
+/// Resize the OffscreenCanvas backing store (live window resize / fullscreen).
+pub fn resize_canvas(width: usize, height: usize) {
+    STATE.with(|cell| {
+        if let Some(s) = cell.borrow().as_ref() {
+            s.canvas.set_width(width as u32);
+            s.canvas.set_height(height as u32);
+            s.ctx.viewport(0, 0, width as i32, height as i32);
+        }
+    });
+}
+
+/// Post the detached UI layer (RGBA, its own resolution) to the page, or an
+/// empty `{type:'ui', w:0}` when no UI was drawn this frame.
+pub fn post_ui(px: Option<(Vec<u8>, usize, usize)>) {
+    let global = js_sys::global();
+    let Ok(worker) = global.dyn_into::<web_sys::DedicatedWorkerGlobalScope>() else { return };
+    let msg = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("type"), &JsValue::from_str("ui"));
+    match px {
+        Some((data, w, h)) => {
+            let arr = js_sys::Uint8ClampedArray::from(&data[..]);
+            let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("w"), &JsValue::from(w as u32));
+            let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("h"), &JsValue::from(h as u32));
+            let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("data"), &arr);
+            let tr = js_sys::Array::new();
+            tr.push(&arr.buffer());
+            let _ = worker.post_message_with_transfer(&msg, &tr);
+        },
+        None => {
+            let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("w"), &JsValue::from(0u32));
+            let _ = worker.post_message(&msg);
+        },
+    }
+}
+
 /// Upload the software framebuffer (`0x00RRGGBB`, row-major, top-left origin) as
 /// a texture and draw it across the whole canvas. This is the `present()` path:
 /// everything the CPU rasteriser produced — 3-D meshes, 2-D shapes, vector
@@ -388,6 +429,9 @@ pub fn blit_rgb(buffer: &[u32], width: usize, height: usize) {
         ctx.enable_vertex_attrib_array(loc);
         ctx.vertex_attrib_pointer_with_i32(loc, 2, Gl::FLOAT, false, 0, 0);
         ctx.draw_arrays(Gl::TRIANGLES, 0, 6);
+
+        #[cfg(feature = "gl-web")]
+        crate::gfx::webgl_scene::draw(ctx, width, height);
 
         // Required so the OffscreenCanvas compositor reads the finished frame.
         ctx.flush();

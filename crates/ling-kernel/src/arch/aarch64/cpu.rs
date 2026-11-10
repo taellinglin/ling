@@ -24,6 +24,13 @@ pub unsafe fn irq_save() -> u64 {
     flags
 }
 
+/// Are IRQs unmasked? False inside an interrupt handler (the CPU masks them on entry).
+pub fn irqs_enabled() -> bool {
+    let daif: u64;
+    unsafe { asm!("mrs {}, daif", out(reg) daif, options(nomem, nostack)) };
+    daif & (1 << 7) == 0
+}
+
 /// Put DAIF back as `irq_save` found it.
 pub unsafe fn irq_restore(flags: u64) {
     asm!("msr daif, {}", in(reg) flags, options(nomem, nostack));

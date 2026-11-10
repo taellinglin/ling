@@ -89,6 +89,13 @@ pub fn init() {
                 let width = ptr::read_unaligned((base + 20) as *const u32);
                 let height = ptr::read_unaligned((base + 24) as *const u32);
                 let bpp = ptr::read_volatile((base + 28) as *const u8);
+                // UEFI + a discrete GPU: the framebuffer is in the card's BAR1,
+                // often far above the 4 GiB the boot page tables map
+                let size = pitch as u64 * height as u64;
+                if addr + size > 1 << 32 && !crate::arch::boot::map_high_early(addr, size) {
+                    crate::drivers::serial::write(b"framebuffer: above 4 GiB and not mappable; no screen\n");
+                    return;
+                }
                 ptr::write(
                     &raw mut FB,
                     Some(FbInfo { addr, pitch, width, height, bpp }),
@@ -413,11 +420,18 @@ pub fn blit_rgb(src: &[u32], sw: usize, sh: usize) {
     let w = sw.min(fw - ox);
     let h = sh.min(fh - oy).min(src.len() / sw);
     let pitch = fb.pitch as usize;
-    for y in 0..h {
+    // rows go to the screen in parallel bands over the cores (x86-64 SMP)
+    let (chunks, per) = crate::par::row_chunks(h, 64);
+    crate::par::for_each(chunks, &|c: usize| blit_rows(src, sw, w, ox, oy, pitch, fb.addr as usize, fb.bpp, c * per, ((c + 1) * per).min(h)));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn blit_rows(src: &[u32], sw: usize, w: usize, ox: usize, oy: usize, pitch: usize, addr: usize, bpp: u8, y0: usize, y1: usize) {
+    for y in y0..y1 {
         let row = &src[y * sw..y * sw + w];
-        let base = fb.addr as usize + (y + oy) * pitch;
+        let base = addr + (y + oy) * pitch;
         unsafe {
-            match fb.bpp {
+            match bpp {
                 32 => {
                     let dst = (base + ox * 4) as *mut u32;
                     ptr::copy_nonoverlapping(row.as_ptr(), dst, w);
@@ -454,6 +468,103 @@ pub fn blit_rgb(src: &[u32], sw: usize, sh: usize) {
             }
         }
     }
+}
+
+/// Copy the `w`×`h` rectangle at (`x`, `y`) of a `stride`-wide 0xRRGGBB frame
+/// to the same place on the live framebuffer (safe-area origin) -- for
+/// partial updates (the boot screen re-blits only what animated).
+pub fn blit_rect(src: &[u32], stride: usize, x: usize, y: usize, w: usize, h: usize) {
+    let Some(fb) = get() else { return };
+    let (ox, oy) = unsafe { (OX as usize, OY as usize) };
+    let (fw, fh) = (fb.width as usize, fb.height as usize);
+    if x + ox >= fw || y + oy >= fh || stride == 0 {
+        return;
+    }
+    let w = w.min(fw - ox - x).min(stride.saturating_sub(x));
+    let h = h.min(fh - oy - y);
+    let pitch = fb.pitch as usize;
+    for row in 0..h {
+        let sy = y + row;
+        if (sy + 1) * stride > src.len() {
+            break;
+        }
+        let line = &src[sy * stride + x..sy * stride + x + w];
+        let base = fb.addr as usize + (sy + oy) * pitch;
+        let px = x + ox;
+        unsafe {
+            match fb.bpp {
+                32 => ptr::copy_nonoverlapping(line.as_ptr(), (base + px * 4) as *mut u32, w),
+                16 => {
+                    let dst = (base + px * 2) as *mut u16;
+                    let mut i = 0usize;
+                    if (dst as usize) & 3 == 0 {
+                        let d32 = dst as *mut u32;
+                        while i + 1 < w {
+                            ptr::write(d32.add(i / 2), rgb565(line[i]) as u32 | ((rgb565(line[i + 1]) as u32) << 16));
+                            i += 2;
+                        }
+                    }
+                    while i < w {
+                        ptr::write(dst.add(i), rgb565(line[i]));
+                        i += 1;
+                    }
+                },
+                24 => {
+                    let mut p = (base + px * 3) as *mut u8;
+                    for &c in line {
+                        ptr::write_volatile(p, (c & 0xFF) as u8);
+                        ptr::write_volatile(p.add(1), ((c >> 8) & 0xFF) as u8);
+                        ptr::write_volatile(p.add(2), ((c >> 16) & 0xFF) as u8);
+                        p = p.add(3);
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+}
+
+/// What is on the screen right now (the safe area), as 0xRRGGBB rows: the
+/// screenshot tool's source. Read back from the live surface rather than any
+/// back buffer because the Ling desktop blits its own frames straight there
+/// (`blit_rgb`) while the native window manager composes in `BACKBUFFER` --
+/// the screen is the one place both end up. Slow-ish (uncached video memory),
+/// but it runs once per capture.
+pub fn read_screen() -> Option<(alloc::vec::Vec<u32>, usize, usize)> {
+    let fb = get()?;
+    let (ox, oy) = unsafe { (OX as usize, OY as usize) };
+    let (w, h) = (width() as usize, height() as usize);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let mut out = alloc::vec![0u32; w * h];
+    for y in 0..h {
+        let base = fb.addr as usize + (y + oy) * fb.pitch as usize;
+        let row = &mut out[y * w..(y + 1) * w];
+        unsafe {
+            match fb.bpp {
+                32 => ptr::copy_nonoverlapping((base + ox * 4) as *const u32, row.as_mut_ptr(), w),
+                24 => {
+                    for (x, d) in row.iter_mut().enumerate() {
+                        let p = (base + (ox + x) * 3) as *const u8;
+                        *d = ptr::read_volatile(p) as u32 | (ptr::read_volatile(p.add(1)) as u32) << 8 | (ptr::read_volatile(p.add(2)) as u32) << 16;
+                    }
+                },
+                16 => {
+                    for (x, d) in row.iter_mut().enumerate() {
+                        let v = ptr::read_volatile((base + (ox + x) * 2) as *const u16) as u32;
+                        let (r, g, b) = ((v >> 11) & 0x1F, (v >> 5) & 0x3F, v & 0x1F);
+                        *d = (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+                    }
+                },
+                _ => return None,
+            }
+        }
+        for d in row.iter_mut() {
+            *d &= 0xFF_FFFF;
+        }
+    }
+    Some((out, w, h))
 }
 
 /// Pack a 0xRRGGBB color into 16-bit RGB565, for the 16bpp framebuffer the
@@ -783,14 +894,82 @@ pub fn back_blend_rounded_rect(x: u32, y: u32, w: u32, h: u32, radius: u32, colo
 static mut PRESENT_HZ: u32 = 60;
 static mut LAST_PRESENT_US: u64 = 0;
 
+// The monitor's own refresh, from lingboot's `edid=WxH@HZ` command-line word
+// (read from the EDID's preferred timing). It replaces the 60 Hz default the
+// first time anyone asks; a rate chosen in Settings (set_present_hz) wins.
+static mut HZ_HINT_DONE: bool = false;
+static mut EDID_LINE: Option<alloc::string::String> = None;
+
+/// The boot command line's `edid=` word (e.g. "2560x1440@144"), if lingboot
+/// read the monitor's EDID.
+pub fn edid_summary() -> Option<alloc::string::String> {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        if (*(&raw const EDID_LINE)).is_none() {
+            let line = crate::arch::bootmodule::cmdline().unwrap_or_default();
+            let w = line.split_whitespace().find_map(|w| w.strip_prefix("edid=")).map(alloc::string::String::from);
+            *(&raw mut EDID_LINE) = Some(w.unwrap_or_default());
+        }
+        return (*(&raw const EDID_LINE)).clone().filter(|s| !s.is_empty());
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+fn apply_hz_hint() {
+    unsafe {
+        if HZ_HINT_DONE {
+            return;
+        }
+        HZ_HINT_DONE = true;
+    }
+    if let Some(e) = edid_summary() {
+        if let Some(hz) = e.split('@').nth(1).and_then(|h| h.parse::<u32>().ok()).filter(|&h| (24..=500).contains(&h)) {
+            unsafe { PRESENT_HZ = hz };
+        }
+    }
+}
+
 pub fn set_present_hz(hz: u32) {
-    unsafe { PRESENT_HZ = hz };
+    unsafe {
+        HZ_HINT_DONE = true;
+        PRESENT_HZ = hz
+    };
 }
 pub fn present_hz() -> u32 {
+    apply_hz_hint();
     unsafe { PRESENT_HZ }
 }
 
+/// Exchange a 0xRRGGBB patch with the 32bpp back buffer at its place (twice =
+/// a no-op): overlays a notice for one `present` without owning the frame.
+#[cfg(target_arch = "x86_64")]
+fn swap_back_rect(t: &mut crate::drivers::screenshot::Patch) {
+    let Some(fb) = get() else { return };
+    if fb.bpp != 32 {
+        return;
+    }
+    let buf = back_buf();
+    for row in 0..t.h {
+        let y = t.y + row;
+        if y >= fb.height as usize {
+            break;
+        }
+        for col in 0..t.w.min((fb.width as usize).saturating_sub(t.x)) {
+            let o = y * fb.pitch as usize + (t.x + col) * 4;
+            if o + 4 > BACKBUFFER_MAX {
+                return;
+            }
+            let cur = u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+            buf[o..o + 4].copy_from_slice(&t.px[row * t.w + col].to_le_bytes());
+            t.px[row * t.w + col] = cur;
+        }
+    }
+}
+
 pub fn present() {
+    // whoever presents a full frame owns the screen: the boot screen bows out
+    crate::drivers::bootscreen::end();
     #[cfg(target_arch = "x86_64")]
     unsafe {
         let hz = PRESENT_HZ;
@@ -807,11 +986,29 @@ pub fn present() {
             LAST_PRESENT_US = crate::arch::timer::now_us();
         }
     }
+    // the native window manager's frames (the x86 Terminal loop) carry the
+    // screenshot notice too, and PrtSc pressed there opens the overlay here
+    #[cfg(target_arch = "x86_64")]
+    let mut toast = crate::drivers::screenshot::toast_image();
+    #[cfg(target_arch = "x86_64")]
+    if let Some(t) = toast.as_mut() {
+        swap_back_rect(t);
+    }
     unsafe {
         let Some(fb) = get() else { return };
         let total = (fb.pitch as usize * fb.height as usize).min(BACKBUFFER_MAX);
         let dst = fb.addr as *mut u8;
         let buf = back_buf();
         ptr::copy_nonoverlapping(buf.as_ptr(), dst, total);
+    }
+    // swapping again puts the frame's own pixels back: callers that do not
+    // redraw the whole back buffer every frame never keep a stale notice
+    #[cfg(target_arch = "x86_64")]
+    if let Some(t) = toast.as_mut() {
+        swap_back_rect(t);
+    }
+    #[cfg(target_arch = "x86_64")]
+    if crate::drivers::screenshot::take_pending() {
+        crate::drivers::screenshot::run();
     }
 }

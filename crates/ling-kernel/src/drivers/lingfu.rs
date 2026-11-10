@@ -612,11 +612,11 @@ impl Unpack {
     }
 
     /// A file onto the FAT volume: its folders, a free-space check, then a
-    /// streamed file (`media::file_*`). FAT32 holds files up to 4 GiB.
+    /// streamed file (`media::file_*`). FAT32 holds files up to 4 GiB, exFAT any size.
     fn begin_media_file(&mut self, base: alloc::string::String, path: alloc::string::String, size: u64) {
-        if size > crate::fs::fat::MAX_FILE {
+        if size > crate::fs::media::max_file(&base) {
             self.dropped += 1;
-            printf(alloc::format!("lingfu:   skipped {path}: {} is over FAT32's 4 GiB file limit\n", mb(size)));
+            printf(alloc::format!("lingfu:   skipped {path}: {} is over the volume's file size limit (FAT32: 4 GiB)\n", mb(size)));
             return;
         }
         // Whole clusters (up to 32 KiB) + a little directory overhead.
@@ -1233,7 +1233,11 @@ pub fn install_all() -> (usize, usize) {
     if !ensure_synced() {
         return (0, 0);
     }
-    let names: Vec<alloc::string::String> = entries().into_iter().map(|(n, _, _)| n).collect();
+    // only what this machine can use: a description naming the other machine rules a package out
+    let all = entries();
+    let total = all.len();
+    let names: Vec<alloc::string::String> = all.into_iter().filter(|(_, _, d)| fits_here(d)).map(|(n, _, _)| n).collect();
+    printf(alloc::format!("lingfu: {} of {total} packages are for {}\n", names.len(), machine().1));
     let (mut ok, mut failed, mut skipped, mut already) = (0usize, 0usize, 0usize, 0usize);
     for (i, name) in names.iter().enumerate() {
         if installed_version(name).is_some() || is_installed(name) {
@@ -1248,10 +1252,21 @@ pub fn install_all() -> (usize, usize) {
         }
     }
     printf(alloc::format!(
-        "lingfu: install --all done -- {ok} installed, {already} already here, {skipped} skipped, {failed} failed; lingfs {} free\n",
-        mb(lingfs::free_objects() as u64 * lingfs::BLOCK_SIZE as u64)
+        "lingfu: install --all done -- {ok} installed, {already} already here, {skipped} skipped, {failed} failed; {}\n",
+        free_summary()
     ));
     (ok, failed)
+}
+
+/// "<n> MB free on <where>" for the install target.
+fn free_summary() -> alloc::string::String {
+    if let Some(v) = crate::vfs::package_volume() {
+        let base = alloc::format!("media/{v}");
+        if let Some((_, f)) = crate::fs::media::space(&base) {
+            return alloc::format!("{} free on {base}", mb(f));
+        }
+    }
+    alloc::format!("{} free on lingfs", mb(lingfs::free_objects() as u64 * lingfs::BLOCK_SIZE as u64))
 }
 
 /// `lingfu sync`: refresh the catalog, then upgrade what is installed.
@@ -1532,7 +1547,7 @@ pub fn sync() -> usize {
         print(b"lingfu: syncing catalog from /repo (HTTP)...\n");
         ("/catalog.txt", true)
     } else {
-        print(b"lingfu: syncing catalog from fu.ling-lang.org (HTTPS)...\n");
+        printf(alloc::format!("lingfu: syncing packages for {} from fu.ling-lang.org (HTTPS)...\n", machine().1));
         ("/api/packages", false)
     };
     match fetch(path, raw) {
@@ -1541,7 +1556,8 @@ pub fn sync() -> usize {
             if n == 0 {
                 print(b"lingfu: synced, but the catalog was empty or unrecognized.\n");
             } else {
-                print(b"lingfu: catalog synced\n");
+                let here = entries().iter().filter(|(_, _, d)| fits_here(d)).count();
+                printf(alloc::format!("lingfu: catalog synced -- {here} of {n} packages are for {}\n", machine().1));
             }
             n
         },
@@ -1607,6 +1623,7 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 /// from the synced catalog, HTTP-GET it, land the blob in lingfs, unpack
 /// via the existing `.lpkg` path. Returns true on a completed install.
 pub fn install(name: &str) -> bool {
+    apps_changed();
     // `lingfu install --all` (every front end funnels through here): install
     // every catalog package that fits; true when none failed.
     if name == "--all" {
@@ -1733,7 +1750,30 @@ pub fn is_app(name: &str) -> bool {
 }
 
 /// Installed packages that are runnable, by name (for the start menus).
+/// `installed_apps`' answer and when it was made (ms): the desktop asks every
+/// few frames, and listing the root + reading each package's manifest took
+/// ~150 ms -- a visible stutter each time. `install` clears it.
+static mut APPS_CACHE: Option<(u64, Vec<alloc::string::String>)> = None;
+const APPS_CACHE_MS: u64 = 5_000;
+
 pub fn installed_apps() -> Vec<alloc::string::String> {
+    let now = crate::arch::timer::now_ms();
+    if let Some((t, v)) = unsafe { (*&raw const APPS_CACHE).as_ref() } {
+        if now.wrapping_sub(*t) < APPS_CACHE_MS {
+            return v.clone();
+        }
+    }
+    let out = installed_apps_scan();
+    unsafe { *&raw mut APPS_CACHE = Some((now, out.clone())) };
+    out
+}
+
+/// Forget the cached app list (a package was installed or removed).
+pub fn apps_changed() {
+    unsafe { *&raw mut APPS_CACHE = None };
+}
+
+fn installed_apps_scan() -> Vec<alloc::string::String> {
     let mut out = Vec::new();
     for (n, is_dir, _) in crate::vfs::list("") {
         if is_dir {
@@ -1752,6 +1792,26 @@ pub fn installed_apps() -> Vec<alloc::string::String> {
 /// this is the convention: "LingOS" in the description marks a LingOS app;
 /// "x86-64"/"x86_64"/"amd64" or "rpi5"/"Raspberry Pi"/"aarch64"/"arm64"
 /// narrow it to one machine; naming neither means both.
+/// This machine: (registry word, what to call it).
+pub fn machine() -> (&'static str, &'static str) {
+    if cfg!(target_arch = "aarch64") {
+        ("rpi5", "Raspberry Pi (rpi5)")
+    } else {
+        ("x86-64", "x86-64")
+    }
+}
+
+/// Can this machine use a package with this description (`for_lingos`'s
+/// platform words: naming only the other machine rules it out)?
+pub fn fits_here(desc: &str) -> bool {
+    let (_, x86, pi) = for_lingos(desc);
+    if cfg!(target_arch = "aarch64") {
+        pi
+    } else {
+        x86
+    }
+}
+
 pub fn for_lingos(desc: &str) -> (bool, bool, bool) {
     let d = desc.to_ascii_lowercase();
     let lingos = d.contains("lingos") || d.contains("ling os");

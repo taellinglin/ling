@@ -10,7 +10,8 @@
 //! * `coll_build(mesh, ...)` turns a mesh into a uniform-grid collision soup;
 //!   `coll_sphere(id, x, y, z, r)` pushes a sphere out of it and returns the contact normal;
 //!   `coll_ray(...)` casts a ray (camera collision, line of sight).
-//! * `pfx_emit / pfx_burst / pfx_rain / pfx_step / pfx_draw / pfx_clear / pfx_count`:
+//! * `pfx_emit / pfx_burst / pfx_rain / pfx_step / pfx_draw / pfx_clear / pfx_count`
+//!   (kinds 0 glow · 1 streak · 2 textured · 3-7 pixel sparks, see `pfx_pixel`):
 //!   glow dots, streaks and textured sprites, simulated and drawn natively.
 //!
 //! The `.ltm` format (little endian): b"LTM1", u32 group count, then per group:
@@ -133,7 +134,7 @@ impl G3dState {
                 px[(y * n + x) as usize] = (a8 << 24) | 0x00FF_FFFF;
             }
         }
-        let t = Arc::new(TexData { w: n, h: n, px });
+        let t = Arc::new(TexData::new(n, n, px));
         self.glow = Some(t.clone());
         t
     }
@@ -376,7 +377,7 @@ fn soft_tex() -> Arc<TexData> {
                 px[(y * n + x) as usize] = (((a * 255.0) as u32) << 24) | 0x00FF_FFFF;
             }
         }
-        Arc::new(TexData { w: n, h: n, px })
+        Arc::new(TexData::new(n, n, px))
     })
     .clone()
 }
@@ -479,6 +480,11 @@ fn load_texture(path: &str, size: u32) -> Result<TexData, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let lower = path.to_lowercase();
     let size = pow2(size.clamp(8, 2048));
+    #[cfg(not(feature = "svg"))]
+    if lower.ends_with(".svg") || lower.ends_with(".svgz") {
+        return Err(format!("{path}: SVG textures need the `game` or `web` profile"));
+    }
+    #[cfg(feature = "svg")]
     if lower.ends_with(".svg") || lower.ends_with(".svgz") {
         let opt = resvg::usvg::Options::default();
         let tree = resvg::usvg::Tree::from_data(&bytes, &opt).map_err(|e| format!("{path}: {e}"))?;
@@ -493,11 +499,11 @@ fn load_texture(path: &str, size: u32) -> Result<TexData, String> {
             let un = |v: u8| if a == 0 { 0 } else { ((v as u32 * 255 + a / 2) / a).min(255) };
             px.push((a << 24) | (un(c.red()) << 16) | (un(c.green()) << 8) | un(c.blue()));
         }
-        return Ok(TexData { w: size, h: size, px });
+        return Ok(TexData::new(size, size, px));
     }
     let img = image::load_from_memory(&bytes).map_err(|e| format!("{path}: {e}"))?.to_rgba8();
     let (w, h) = img.dimensions();
-    Ok(TexData { w: size, h: size, px: resample(img.as_raw(), w, h, size) })
+    Ok(TexData::new(size, size, resample(img.as_raw(), w, h, size)))
 }
 
 // ── .ltm meshes ──────────────────────────────────────────────────────────────
@@ -859,7 +865,7 @@ impl Interpreter {
                         row[i as usize] = ((al * 255.0) as u32) << 24 | ((c[0] * 255.0) as u32) << 16 | ((c[1] * 255.0) as u32) << 8 | (c[2] * 255.0) as u32;
                     }
                 });
-                let tex = Arc::new(TexData { w: n, h: n, px });
+                let tex = Arc::new(TexData::new(n, n, px));
                 if id >= 0.0 && (id as usize) < self.g3d.texs.len() {
                     self.g3d.texs[id as usize] = tex;
                     Ok(Value::Number(id))
@@ -1035,6 +1041,7 @@ impl Interpreter {
             },
             // tm_voice(voice, vol, pitch): retune / re-level a playing sample voice
             "tm_voice" => {
+                #[cfg(feature = "audio")]
                 if let Some(a) = &self.audio {
                     a.set_sample_voice(num(args, 0, 0.0) as u32, f(args, 1, -1.0), f(args, 2, -1.0));
                 }
@@ -1363,6 +1370,8 @@ impl Interpreter {
             //   span * size / 2 draws the letter at `size` world units per em. -1 when the font or
             //   glyph has no outline (a space).
             #[cfg(not(target_arch = "wasm32"))]
+            // (tiny-skia fill: the `svg` building block, part of `game` and `web`)
+            #[cfg(feature = "svg")]
             "tm_glyph" => {
                 let fid = num(args, 0, -1.0);
                 let ch = text(args, 1).chars().next().unwrap_or(' ');
@@ -1410,7 +1419,7 @@ impl Interpreter {
                 paint.anti_alias = true;
                 pm.fill_path(&path, &paint, resvg::tiny_skia::FillRule::Winding, resvg::tiny_skia::Transform::identity(), None);
                 let data: Vec<u32> = pm.pixels().iter().map(|c| ((c.alpha() as u32) << 24) | 0x00FF_FFFF).collect();
-                self.g3d.texs.push(Arc::new(TexData { w: px, h: px, px: data }));
+                self.g3d.texs.push(Arc::new(TexData::new(px, px, data)));
                 Ok(nums(&[(self.g3d.texs.len() - 1) as f32, span]))
             },
             // tm_quad(tex, x, y, z, ux, uy, uz, vx, vy, vz, tint, alpha, blend, bias=0, u0=0, v0=0, ru=1, rv=1) - a textured quad in
@@ -1635,6 +1644,11 @@ impl Interpreter {
         cull: u8,
         light: Option<&TexShade>,
     ) -> usize {
+        // Hyperbolic lens (set_camera_hyper): the warp bends each VERTEX, so a big triangle
+        // (terrain cells are 16 units, water cells too) stays flat between its corners and the
+        // ground visibly drifts under models as the lens follows the player. Inside the lens a
+        // long triangle is split at its edge midpoints (same winding) until its edges are short
+        // enough that the bend's error across it stays under ~0.05 units (see hyper_split).
         let near = -gfx.camera.zdist + 0.05;
         let d = [
             gfx.camera.depth(wp[0][0], wp[0][1], wp[0][2]),
@@ -1643,6 +1657,13 @@ impl Interpreter {
         ];
         if d[0] <= near && d[1] <= near && d[2] <= near {
             return 0;
+        }
+        if let Some(kids) = hyper_split(&gfx.camera, &wp, &uv) {
+            let mut n = 0;
+            for (cw, cu) in kids {
+                n += Self::g3d_push_poly(gfx, cw, cu, tex, tint, hole, zwrite, cull, light);
+            }
+            return n;
         }
         let mut cp: [([f32; 3], [f32; 2]); 4] = [([0.0; 3], [0.0; 2]); 4];
         let mut cn = 0usize;
@@ -1904,11 +1925,97 @@ impl Interpreter {
                         self.g3d_billboard(&tex, p.p, size, p.spin * (p.max - p.life), col, p.alpha * fade.min(1.0), 0);
                     }
                 },
+                3..=7 => self.pfx_pixel(p, size, col, fade * p.alpha),
                 _ => self.g3d_billboard(&glow, p.p, size, 0.0, col, fade * p.alpha, 1),
             }
         }
         // keep particles emitted meanwhile (none: drawing does not emit) and restore
         self.g3d.parts = parts;
+    }
+
+    /// Pixel particle kinds (3 spark · 4 twinkle · 5 crackle · 6 trail · 7 flicker):
+    /// a crisp additive square `size` pixels across at 720p, snapped to the pixel
+    /// grid, a little bigger up close. Sparks (3-6) are self-lit and ignore fog
+    /// (fireworks burst far past the fog end); the flicker kind (fire) fades into
+    /// it. Same look as the LingOS kernel (ling-kernel g3d.rs `pixel_spark`).
+    fn pfx_pixel(&mut self, p: &Part, size: f32, col: u32, alpha: f32) {
+        let hs = |x: u32| -> u32 {
+            let mut x = x ^ (x >> 16);
+            x = x.wrapping_mul(0x7feb_352d);
+            x ^= x >> 15;
+            x = x.wrapping_mul(0x846c_a68b);
+            x ^ (x >> 16)
+        };
+        let seed = p.max.to_bits() ^ p.v[0].to_bits().rotate_left(7);
+        let t = 1.0 - (p.life / p.max).clamp(0.0, 1.0);
+        let age = p.max - p.life;
+        let mut col = col;
+        let mut a = alpha;
+        match p.kind {
+            4 if t > 0.5 && hs(seed ^ (age * 24.0) as u32) & 3 == 0 => a *= 0.15,
+            5 if t > 0.35 => {
+                if hs(seed ^ (age * 30.0) as u32) % 100 < 30 {
+                    col = 0xfff0c8;
+                } else {
+                    a *= 0.05;
+                }
+            },
+            7 => a *= 0.6 + 0.4 * ((hs(seed ^ (age * 40.0) as u32) >> 8) as f32 / 16_777_216.0),
+            _ => {},
+        }
+        // sparks (3-6) are emissive: drive the hue's brightest channel to 255 so the
+        // colour grade passes them through untouched (grade.rs) and bloom catches them
+        if (3..=6).contains(&p.kind) {
+            col = emissive_rgb(col);
+        }
+        let mut gfx = self.gfx.borrow_mut();
+        let near = -gfx.camera.zdist + 0.05;
+        let hp = gfx.camera.hyper(p.p[0], p.p[1], p.p[2]);
+        let d = gfx.camera.depth_unwarped(hp.0, hp.1, hp.2);
+        if d <= near + 0.05 {
+            return;
+        }
+        let (fs, fe) = (gfx.fog_start, gfx.fog_end);
+        if p.kind == 7 && fe > fs && fe > 0.0 {
+            a *= 1.0 - ((d - fs) / (fe - fs)).clamp(0.0, 1.0);
+        }
+        if a <= 0.02 {
+            return;
+        }
+        let (sx, sy, sz) = gfx.camera.project_unwarped(hp.0, hp.1, hp.2);
+        let (w, h) = (gfx.width as f32, gfx.height as f32);
+        if sx < -16.0 || sy < -16.0 || sx > w + 16.0 || sy > h + 16.0 {
+            return;
+        }
+        let px = (h / 720.0).max(1.0);
+        let boost = (14.0 / (d + gfx.camera.zdist).max(1e-3)).clamp(1.0, 2.0);
+        let half = (size * px * boost).round().max(1.0) * 0.5;
+        let k = |m: f32| -> u32 {
+            let s = (a * m).clamp(0.0, 1.0);
+            let c = |sh: u32| ((((col >> sh) & 255) as f32) * s) as u32;
+            (c(16) << 16) | (c(8) << 8) | c(0)
+        };
+        let (pm, pa) = (gfx.blend, gfx.alpha);
+        gfx.depth_queue.set_state(1, 1.0);
+        let mut sq = |g: &mut crate::gfx::GfxState, x: f32, y: f32, hh: f32, c: u32, z: f32| {
+            g.depth_queue.push_triangle_g_zv(x - hh, y - hh, z, c, x + hh, y - hh, z, c, x + hh, y + hh, z, c, 3, true);
+            g.depth_queue.push_triangle_g_zv(x - hh, y - hh, z, c, x + hh, y + hh, z, c, x - hh, y + hh, z, c, 3, true);
+        };
+        let (qx, qy) = (sx.round(), sy.round());
+        sq(&mut gfx, qx, qy, half, k(1.0), sz);
+        if size >= 2.0 {
+            sq(&mut gfx, qx, qy, half + px, k(0.22), sz + 0.001);
+        }
+        if p.kind == 6 {
+            let tp = gfx.camera.hyper(p.p[0] - p.v[0] * 0.05, p.p[1] - p.v[1] * 0.05, p.p[2] - p.v[2] * 0.05);
+            if gfx.camera.depth_unwarped(tp.0, tp.1, tp.2) > near + 0.05 {
+                let (tx, ty, _) = gfx.camera.project_unwarped(tp.0, tp.1, tp.2);
+                for (fr, m) in [(0.5f32, 0.55f32), (1.0, 0.3)] {
+                    sq(&mut gfx, (sx + (tx - sx) * fr).round(), (sy + (ty - sy) * fr).round(), (half * 0.75).max(0.5), k(m), sz + 0.002);
+                }
+            }
+        }
+        gfx.depth_queue.set_state(pm, pa);
     }
 
     fn tm_sprite(&mut self, args: &[Value]) {
@@ -2098,7 +2205,7 @@ impl Interpreter {
 /// A 1×1 opaque white texture (flat-colour quads through the textured path).
 fn solid_tex() -> Arc<TexData> {
     thread_local! {
-        static SOLID: Arc<TexData> = Arc::new(TexData { w: 1, h: 1, px: vec![0xFFFF_FFFF] });
+        static SOLID: Arc<TexData> = Arc::new(TexData::new(1, 1, vec![0xFFFF_FFFF]));
     }
     SOLID.with(|s| s.clone())
 }
@@ -2206,7 +2313,7 @@ mod upnp {
 
     /// 100.64.0.0/10 (carrier NAT) and the private ranges: a forward there doesn't reach the internet.
     fn is_shared(ip: &str) -> bool {
-        let o: Vec<u8> = ip.split('.').filter_map(|x| x.parse().ok()).collect();
+        let o: Vec<u8> = ip.split('.').filter_map(|x| x.parse::<u8>().ok()).collect();
         o.len() == 4
             && (o[0] == 10 || (o[0] == 100 && (64..128).contains(&o[1])) || (o[0] == 172 && (16..32).contains(&o[1])) || (o[0] == 192 && o[1] == 168))
     }
@@ -2353,4 +2460,57 @@ mod upnp {
             assert!(!super::is_shared("81.2.69.160"));
         }
     }
+}
+
+/// The four midpoint children of a triangle the hyperbolic lens would bend visibly between its
+/// corners, or `None` (lens off, the triangle short enough, out of the lens' reach, or so large
+/// -- over 64 units -- it is not ground detail). See `g3d_push_poly`.
+#[allow(clippy::type_complexity)]
+pub(crate) fn hyper_split(cam: &crate::gfx::camera::Camera3D, wp: &[[f32; 3]; 3], uv: &[[f32; 2]; 3]) -> Option<[([[f32; 3]; 3], [[f32; 2]; 3]); 4]> {
+    let r = cam.hyp_r;
+    if r <= 0.0 {
+        return None;
+    }
+    let e2 = |i: usize, j: usize| {
+        let (dx, dz) = (wp[i][0] - wp[j][0], wp[i][2] - wp[j][2]);
+        dx * dx + dz * dz
+    };
+    let longest = e2(0, 1).max(e2(1, 2)).max(e2(2, 0));
+    // the saddle bends y by about s * d^2 / R (times up to 1/3 for ground below the mid-plane):
+    // a chord of length e misses that curve by ~ s * e^2 / (4R) / 3 -- keep it under 0.05 units.
+    // A gentle lens (R 70, s 0.35) splits 16-unit terrain cells about once; the motorcycle's
+    // boost lens (R 30, s 0.95) a little further. Never below 2 units.
+    let s = cam.hyp_s.abs().max(0.01);
+    let lim2 = (0.6 * r / s).max(4.0);
+    if longest <= lim2 || longest > 64.0 * 64.0 {
+        return None;
+    }
+    // only near the hub: the bend saturates (its tanh cap) a few radii out
+    let cx = (wp[0][0] + wp[1][0] + wp[2][0]) / 3.0 - cam.hx;
+    let cz = (wp[0][2] + wp[1][2] + wp[2][2]) / 3.0 - cam.hz;
+    let reach = r * 2.5 + 64.0;
+    if cx * cx + cz * cz > reach * reach {
+        return None;
+    }
+    let m3 = |a: [f32; 3], b: [f32; 3]| [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5, (a[2] + b[2]) * 0.5];
+    let m2 = |a: [f32; 2], b: [f32; 2]| [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+    let (ab, bc, ca) = (m3(wp[0], wp[1]), m3(wp[1], wp[2]), m3(wp[2], wp[0]));
+    let (tab, tbc, tca) = (m2(uv[0], uv[1]), m2(uv[1], uv[2]), m2(uv[2], uv[0]));
+    Some([
+        ([wp[0], ab, ca], [uv[0], tab, tca]),
+        ([ab, wp[1], bc], [tab, uv[1], tbc]),
+        ([ca, bc, wp[2]], [tca, tbc, uv[2]]),
+        ([ab, bc, ca], [tab, tbc, tca]),
+    ])
+}
+
+/// Scale a colour so its brightest channel is 255 (hue kept): an emissive spark.
+fn emissive_rgb(c: u32) -> u32 {
+    let (r, g, b) = ((c >> 16) & 255, (c >> 8) & 255, c & 255);
+    let m = r.max(g).max(b);
+    if m == 0 {
+        return c;
+    }
+    let k = |v: u32| (v * 255 / m).min(255);
+    (k(r) << 16) | (k(g) << 8) | k(b)
 }

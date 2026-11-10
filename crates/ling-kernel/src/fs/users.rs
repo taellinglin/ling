@@ -108,6 +108,31 @@ pub(crate) fn argon2id(salt: &[u8], password: &[u8]) -> Option<[u8; 32]> {
 /// Why the last `verify` said no ("" after a success).
 static mut LAST_VERIFY_ERR: &str = "";
 
+/// The password was right; this account also needs its authenticator code.
+pub const TWOFA_NEEDED: &str = "enter the 6-digit code from your authenticator app";
+/// The authenticator code (or recovery code) was wrong or already used.
+pub const TWOFA_WRONG: &str = "that code did not match -- use the newest code from the app, or a recovery code";
+
+/// For logins that have one secret field (SSH, the terminal's `su`): a
+/// two-factor account types its password with the 6-digit code right after
+/// it ("hunter2" + "123456" = "hunter2123456"); others just the password.
+pub fn verify_login(username: &str, secret: &str) -> bool {
+    if !crate::fs::twofa::enabled(username) {
+        return verify(username, secret);
+    }
+    let n = secret.len();
+    if n <= 6 || !secret.is_char_boundary(n - 6) || !secret[n - 6..].bytes().all(|b| b.is_ascii_digit()) {
+        set_last_error(TWOFA_NEEDED);
+        return false;
+    }
+    verify(username, &secret[..n - 6]) && crate::fs::twofa::check(username, &secret[n - 6..])
+}
+
+/// `create` refused: the same password hashed to two different values.
+pub const HASH_UNSTABLE: &str = "the password hash came out different twice, so it was not saved -- a memory fault; please report it";
+/// `create` refused: the account record read back different from what was written.
+pub const RECORD_READBACK: &str = "the account record read back wrong from the SD card, so it was not saved -- please report it";
+
 pub fn last_verify_error() -> &'static str {
     unsafe { LAST_VERIFY_ERR }
 }
@@ -160,6 +185,13 @@ pub fn create(
     fresh_salt(&mut salt);
     // Argon2id; the old scheme only if its memory could not be had.
     let (hash, kdf): ([u8; 32], &[u8]) = match argon2id(&salt, password.as_bytes()) {
+        // hashed twice: a stored hash that differs from the next one computed
+        // locks the account out, so never save one that is not reproducible
+        Some(h) if argon2id(&salt, password.as_bytes()) != Some(h) => {
+            crate::console_write(b"users: the password hash came out different twice -- not saved (memory fault?)\n");
+            unsafe { LAST_VERIFY_ERR = HASH_UNSTABLE };
+            return false;
+        },
         Some(h) => (h, b"argon2id"),
         None => {
             let mut s = [0u8; SALT_BYTES];
@@ -202,7 +234,16 @@ pub fn create(
     append(&mut buf, &mut len, &hash_hex);
     append(&mut buf, &mut len, b"\n");
 
-    let ok = lingfs::write_in_dir(USERS_DIR, username, &buf[..len]).is_ok();
+    let mut ok = lingfs::write_in_dir(USERS_DIR, username, &buf[..len]).is_ok();
+    if ok {
+        // read it back: what sign-in will compare against
+        let mut back = [0u8; BLOCK_SIZE];
+        if load_record(username, &mut back) != Some(len) || back[..len] != buf[..len] {
+            crate::console_write(b"users: the account record read back different from what was written\n");
+            unsafe { LAST_VERIFY_ERR = RECORD_READBACK };
+            ok = false;
+        }
+    }
     if ok {
         ensure_home(username);
     }
@@ -344,19 +385,35 @@ pub fn group_of(username: &str, out: &mut [u8; 32]) -> Option<usize> {
 
 const RESET_FILE: &str = "password_reset";
 
+/// CACHED list: the sign-in screen asks `reset_pending()` EVERY FRAME, and an
+/// uncached read goes to the SD card -- that one read dragged the whole login
+/// screen to ~6 fps on the Pi. Every writer goes through `reset_store`, which
+/// refreshes the cache, so it can never go stale. Before storage mounts the
+/// read answers empty WITHOUT caching, so the real list still loads later.
+static mut RESET_CACHE: Option<alloc::vec::Vec<alloc::string::String>> = None;
+
 fn reset_list() -> alloc::vec::Vec<alloc::string::String> {
+    if let Some(c) = unsafe { (*(&raw const RESET_CACHE)).as_ref() } {
+        return c.clone();
+    }
+    if !lingfs::is_mounted() {
+        return alloc::vec::Vec::new();
+    }
     let mut buf = [0u8; 1024];
-    match lingfs::read_file_all(RESET_FILE, &mut buf) {
+    let list: alloc::vec::Vec<alloc::string::String> = match lingfs::read_file_all(RESET_FILE, &mut buf) {
         Ok(Some(n)) => core::str::from_utf8(&buf[..n])
             .unwrap_or("")
             .split_whitespace()
             .map(alloc::string::String::from)
             .collect(),
         _ => alloc::vec::Vec::new(),
-    }
+    };
+    unsafe { *(&raw mut RESET_CACHE) = Some(list.clone()) };
+    list
 }
 
 fn reset_store(list: &[alloc::string::String]) {
+    unsafe { *(&raw mut RESET_CACHE) = Some(list.to_vec()) };
     let text = list.join("\n");
     let _ = lingfs::write_file_any(RESET_FILE, text.as_bytes());
 }
@@ -437,6 +494,136 @@ fn set_password_record(username: &str, new_password: &str) -> bool {
         return false;
     };
     create(username, new_password, first, last, phone, email, group)
+}
+
+/// Rename the account `old` to `new` (the password confirms it). Everything
+/// moves: the account record, the home folder with its hidden files (one
+/// lingfs commit, nothing copied), the two-factor record, a pending password
+/// reset, the chmod table, and the keyring -- whose wrapping and the sealed
+/// private files are bound to the name/path, so they are re-sealed under the
+/// new one. The signed-in session continues as `new`.
+pub fn rename(old: &str, new: &str, password: &str) -> Result<alloc::string::String, alloc::string::String> {
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    let valid = |s: &str| {
+        !s.is_empty() && s.len() <= 15 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.') && !s.starts_with('.')
+    };
+    if !valid(new) {
+        return Err(String::from("the new name may use letters, digits, '.', '_' and '-' (up to 15 characters)"));
+    }
+    if old == new {
+        return Err(String::from("that is already the account's name"));
+    }
+    let mut rec = [0u8; BLOCK_SIZE];
+    let Some(rec_len) = load_record(old, &mut rec) else { return Err(format!("no account named {old}")) };
+    let mut probe = [0u8; BLOCK_SIZE];
+    if load_record(new, &mut probe).is_some() || lingfs::path_kind(&format!("home/{new}")).is_some() {
+        return Err(format!("{new} is already taken"));
+    }
+    if !verify(old, password) {
+        return Err(String::from("wrong password -- nothing was changed"));
+    }
+    if !crate::keyring::unlock(old, password) {
+        return Err(String::from("the keyring could not be opened -- nothing was changed"));
+    }
+
+    // Sealed private files: open them under their old path now, seal under the new one.
+    let (old_home, new_home) = (format!("home/{old}"), format!("home/{new}"));
+    let mut resealed: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut stuck = 0usize;
+    fn walk(dir: &str, out: &mut Vec<String>, depth: usize) {
+        if depth > 12 {
+            return;
+        }
+        let mut i = 0usize;
+        let mut nb = [0u8; 96];
+        while let Some((len, is_dir)) = lingfs::list_entry(dir, i, &mut nb) {
+            i += 1;
+            let Ok(name) = core::str::from_utf8(&nb[..len]) else { continue };
+            let p = format!("{dir}/{name}");
+            if is_dir {
+                walk(&p, out, depth + 1);
+            } else {
+                out.push(p);
+            }
+            if i > 4096 {
+                break;
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for sub in ["Private", "Programs/Horizon", ".messenger"] {
+        walk(&format!("{old_home}/{sub}"), &mut files, 0);
+    }
+    for p in files {
+        let Some(size) = lingfs::file_size(&p) else { continue };
+        let mut buf = alloc::vec![0u8; size.max(1)];
+        let Ok(Some(n)) = lingfs::read_file_all(&p, &mut buf) else { continue };
+        buf.truncate(n);
+        if !crate::keyring::is_sealed(&buf) {
+            continue;
+        }
+        let Some(plain) = crate::keyring::open("vfs-private", p.as_bytes(), &buf) else {
+            stuck += 1; // sealed some other way (Messenger's own format): moved as is
+            continue;
+        };
+        let np = format!("{new_home}{}", &p[old_home.len()..]);
+        let Some(blob) = crate::keyring::seal("vfs-private", np.as_bytes(), &plain) else {
+            return Err(String::from("re-sealing a private file failed -- nothing was changed"));
+        };
+        resealed.push((np, blob));
+    }
+
+    // The account record under the new name (the same bytes: hash, salt, fields).
+    if lingfs::write_in_dir(USERS_DIR, new, &rec[..rec_len]).is_err() || load_record(new, &mut probe) != Some(rec_len) || probe[..rec_len] != rec[..rec_len] {
+        let _ = lingfs::remove_path(&format!("{USERS_DIR}/{new}"));
+        return Err(String::from("writing the new account record failed -- nothing was changed"));
+    }
+    // The home folder, in one commit.
+    if lingfs::path_kind(&old_home).is_some() && lingfs::move_path(&old_home, &new_home).is_err() {
+        let _ = lingfs::remove_path(&format!("{USERS_DIR}/{new}"));
+        return Err(String::from("moving the home folder failed -- nothing was changed"));
+    }
+    // From here the new name is live; the rest is carried over.
+    let _ = lingfs::remove_path(&format!("{USERS_DIR}/{old}"));
+    let mut notes: Vec<String> = Vec::new();
+    for (np, blob) in &resealed {
+        if lingfs::write_path_any(np, blob).is_err() {
+            notes.push(format!("could not re-seal {np}"));
+        }
+    }
+    if !crate::keyring::rename_user(old, new, password) {
+        notes.push(String::from("keyring not re-wrapped (private files stay sealed)"));
+    }
+    if lingfs::path_kind(&format!("twofa/{old}")).is_some() && lingfs::move_path(&format!("twofa/{old}"), &format!("twofa/{new}")).is_err() {
+        notes.push(String::from("two-factor record not moved"));
+    }
+    if reset_pending(old) && !reset_list().iter().any(|u| u == "*") {
+        let l: Vec<String> = reset_list().into_iter().map(|u| if u == old { String::from(new) } else { u }).collect();
+        reset_store(&l);
+    }
+    let mut gb = [0u8; 32];
+    let glen = group_of(new, &mut gb).unwrap_or(0);
+    let group = core::str::from_utf8(&gb[..glen]).unwrap_or("users");
+    if lingfs::current_user() == old {
+        lingfs::set_current_user(new, if group.is_empty() { "users" } else { group });
+    }
+    crate::modes::rename_home(old, new);
+    ensure_home(new);
+    let mut msg = format!("renamed {old} -> {new}: account, home folder, keyring ({} private file(s) re-sealed", resealed.len());
+    if stuck > 0 {
+        msg.push_str(&format!(", {stuck} moved as they were"));
+    }
+    msg.push(')');
+    for n in notes {
+        msg.push_str("; ");
+        msg.push_str(&n);
+    }
+    msg.push_str(". Sign out and sign in as ");
+    msg.push_str(new);
+    msg.push_str(" (SSH too) to finish.");
+    Ok(msg)
 }
 
 /// Change `username`'s group, keeping every other field (including the

@@ -23,10 +23,27 @@ const TOP: u32 = 224;
 const FG: u32 = 0xC8_D0_E0;
 const BG: u32 = 0x10_10_18;
 
+/// A small palette so prompts and status lines can be color-coded (the
+/// zsh-style prompt: user green, host blue, path red, miao soul cyan...).
+/// Index 0 is the plain console FG; 1..=7 are the design system's ROYGBIV;
+/// then dim, ok-green, err-red, white. One byte per cell keeps the grid cheap.
+const PALETTE: [u32; 12] = [
+    FG, 0xED4A37, 0xF7941E, 0xF7D846, 0x45C870, 0x3BAAEB, 0x4A64D8, 0x9A53D6, 0x8C_90_98, 0x6A_C0_6A, 0xE0_6A_4A, 0xF5_F5_F5,
+];
+
 static mut GRID: [u8; MAX_COLS * MAX_ROWS] = [b' '; MAX_COLS * MAX_ROWS];
+static mut COLORS: [u8; MAX_COLS * MAX_ROWS] = [0; MAX_COLS * MAX_ROWS];
+static mut CUR_COLOR: u8 = 0;
 static mut COL: usize = 0;
 static mut ROW: usize = 0;
 static mut READY: bool = false;
+
+/// Set the color (a PALETTE index) for the characters that follow; out-of-range
+/// resets to the default. The serial side carries its own ANSI codes -- see
+/// `lib.rs::console_color`.
+pub fn set_color(idx: u8) {
+    unsafe { CUR_COLOR = if (idx as usize) < PALETTE.len() { idx } else { 0 } };
+}
 
 fn cols() -> usize {
     let w = framebuffer::width();
@@ -56,6 +73,10 @@ pub fn init() {
         for cell in (&mut *&raw mut GRID).iter_mut() {
             *cell = b' ';
         }
+        for cell in (&mut *&raw mut COLORS).iter_mut() {
+            *cell = 0;
+        }
+        CUR_COLOR = 0;
         COL = 0;
         ROW = 0;
         READY = true;
@@ -65,7 +86,8 @@ pub fn init() {
 fn draw_cell(col: usize, row: usize, c: u8) {
     let x = MARGIN + col as u32 * CELL_W;
     let y = TOP + row as u32 * CELL_H;
-    font8x8::draw_char(x, y, c, FG, BG);
+    let ci = unsafe { COLORS[row * MAX_COLS + col] } as usize;
+    font8x8::draw_char(x, y, c, PALETTE[ci.min(PALETTE.len() - 1)], BG);
 }
 
 /// Shift the grid up one line and repaint the whole console from it.
@@ -76,13 +98,16 @@ fn scroll() {
     }
     unsafe {
         let grid = &mut *&raw mut GRID;
+        let colors = &mut *&raw mut COLORS;
         for r in 1..nr {
             for c in 0..nc {
                 grid[(r - 1) * MAX_COLS + c] = grid[r * MAX_COLS + c];
+                colors[(r - 1) * MAX_COLS + c] = colors[r * MAX_COLS + c];
             }
         }
         for c in 0..nc {
             grid[(nr - 1) * MAX_COLS + c] = b' ';
+            colors[(nr - 1) * MAX_COLS + c] = 0;
         }
     }
     let (w, h) = (framebuffer::width(), framebuffer::height());
@@ -119,6 +144,7 @@ pub fn putc(ch: u8) {
             if COL > 0 {
                 COL -= 1;
                 GRID[ROW * MAX_COLS + COL] = b' ';
+                COLORS[ROW * MAX_COLS + COL] = 0;
                 draw_cell(COL, ROW, b' ');
             }
         } else if (0x20..0x7F).contains(&ch) {
@@ -131,6 +157,7 @@ pub fn putc(ch: u8) {
                 ROW = nr - 1;
             }
             GRID[ROW * MAX_COLS + COL] = ch;
+            COLORS[ROW * MAX_COLS + COL] = CUR_COLOR;
             draw_cell(COL, ROW, ch);
             COL += 1;
         }

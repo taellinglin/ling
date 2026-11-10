@@ -307,6 +307,23 @@ pub fn rewrap(user: &str, new_password: &str) -> bool {
     seal_master(user, new_password.as_bytes(), &master, mode)
 }
 
+/// The account was renamed: wrap the open master key for `new_user` (the
+/// wrapping is bound to the account name) into `home/<new_user>/.keyring`
+/// and keep the session open under the new name. False when `old_user`'s
+/// keyring is not the open one.
+pub fn rename_user(old_user: &str, new_user: &str, password: &str) -> bool {
+    if self::user().as_deref() != Some(old_user) {
+        return false;
+    }
+    let master = unsafe { *(&raw const MASTER) };
+    let mode = unsafe { MODE };
+    if !seal_master(new_user, password.as_bytes(), &master, mode) {
+        return false;
+    }
+    unsafe { USER = Some(String::from(new_user)) };
+    true
+}
+
 /// A 256-bit key for one purpose ("messenger-chat", "vfs-private", ...),
 /// derived from the master key; None while locked.
 pub fn key(purpose: &str) -> Option<[u8; 32]> {

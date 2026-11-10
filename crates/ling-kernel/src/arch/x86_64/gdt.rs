@@ -48,7 +48,10 @@ static mut TSS: Tss = Tss {
     iomap_base: size_of::<Tss>() as u16,
 };
 
-const GDT_ENTRIES: usize = 9;
+// 0..=7 as below, then one 16-byte TSS descriptor per application processor
+// (smp.rs), each core needing its own TSS for its own fault stacks.
+const AP_TSS_BASE: usize = 8;
+const GDT_ENTRIES: usize = AP_TSS_BASE + 2 * super::smp::MAX_APS;
 static mut GDT: [u64; GDT_ENTRIES] = [0; GDT_ENTRIES];
 
 pub const KERNEL_CODE_SEL: u16 = 1 * 8;
@@ -160,6 +163,72 @@ pub fn init(boot_stack_top: u64) {
             options(nostack, preserves_flags),
         );
         asm!("ltr {sel:x}", sel = in(reg) TSS_SEL, options(nostack, preserves_flags));
+    }
+}
+
+const TSS_ZERO: Tss = Tss {
+    reserved0: 0,
+    rsp0: 0,
+    rsp1: 0,
+    rsp2: 0,
+    reserved1: 0,
+    ist: [0; 7],
+    reserved2: 0,
+    reserved3: 0,
+    iomap_base: size_of::<Tss>() as u16,
+};
+static mut AP_TSS: [Tss; super::smp::MAX_APS] = [TSS_ZERO; super::smp::MAX_APS];
+
+/// Give application processor `i` (0-based) a TSS whose IST stacks (double
+/// fault, NMI, machine check, timer gate) are `fault_stack_top`. Runs on the
+/// boot core before the APs start.
+pub fn prepare_ap(i: usize, fault_stack_top: u64) {
+    unsafe {
+        let t = &raw mut AP_TSS[i];
+        (*t).rsp0 = fault_stack_top;
+        (*t).ist[(DOUBLE_FAULT_IST - 1) as usize] = fault_stack_top;
+        (*t).ist[(TIMER_IST - 1) as usize] = fault_stack_top;
+        let (lo, hi) = tss_descriptors(t as u64, (size_of::<Tss>() - 1) as u32);
+        GDT[AP_TSS_BASE + 2 * i] = lo;
+        GDT[AP_TSS_BASE + 2 * i + 1] = hi;
+    }
+}
+
+/// On application processor `i`: load the shared GDT, reload the segment
+/// registers and take its own TSS.
+pub fn load_ap(i: usize) {
+    unsafe {
+        #[repr(C, packed)]
+        struct GdtPointer {
+            limit: u16,
+            base: u64,
+        }
+        let pointer = GdtPointer {
+            limit: (size_of::<[u64; GDT_ENTRIES]>() - 1) as u16,
+            base: (&raw const GDT) as u64,
+        };
+        asm!("lgdt [{}]", in(reg) &pointer, options(readonly, nostack, preserves_flags));
+        asm!(
+            "lea {tmp}, [rip + 55f]",
+            "push {code_sel}",
+            "push {tmp}",
+            "retfq",
+            "55:",
+            tmp = out(reg) _,
+            code_sel = in(reg) KERNEL_CODE_SEL as u64,
+            options(nostack),
+        );
+        asm!(
+            "mov ds, {sel:x}",
+            "mov es, {sel:x}",
+            "mov fs, {sel:x}",
+            "mov gs, {sel:x}",
+            "mov ss, {sel:x}",
+            sel = in(reg) KERNEL_DATA_SEL,
+            options(nostack, preserves_flags),
+        );
+        let sel = ((AP_TSS_BASE + 2 * i) * 8) as u16;
+        asm!("ltr {sel:x}", sel = in(reg) sel, options(nostack, preserves_flags));
     }
 }
 

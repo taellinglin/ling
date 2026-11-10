@@ -209,7 +209,17 @@ pub fn ensure_init() -> bool {
 }
 
 pub fn init() -> Result<(), ()> {
-    let loc = pci::find(0x02, 0x00, 0x00).ok_or(())?;
+    // The first Ethernet controller that is NOT an igc/igb part: those have
+    // no legacy descriptors and are driven by `net_igc` (on the real PC the
+    // I225-V is the only class-0x02 device, and this used to grab it).
+    let loc = pci::find_all_class(0x02, 0x00)
+        .into_iter()
+        .find(|l| {
+            let id = l.read32(0x00);
+            crate::drivers::net_igc::model_for(id as u16, (id >> 16) as u16).is_none()
+        })
+        .ok_or(())?;
+    unsafe { PCI_ID = loc.read32(0x00) };
     let bar0 = loc.bar(0);
     if bar0 == 0 {
         return Err(());
@@ -342,11 +352,39 @@ fn setup_tx() {
 }
 
 pub fn mac() -> [u8; 6] {
+    // Some callers (lingapp's Network panel) still ask this module directly;
+    // when the igc is the active NIC instead, answer with its MAC.
+    if unsafe { !INITED } && crate::drivers::net_igc::is_up() {
+        return crate::drivers::net_igc::mac();
+    }
     unsafe { MAC }
 }
 
 pub fn link_up() -> bool {
+    // no device mapped: don't read physical address 8
+    if unsafe { MMIO_BASE } == 0 {
+        return false;
+    }
     reg_read(REG_STATUS) & STATUS_LU != 0
+}
+
+/// PCI vendor (low 16) / device (high 16) id of the controller `init` took.
+static mut PCI_ID: u32 = 0;
+pub fn pci_id() -> u32 {
+    unsafe { PCI_ID }
+}
+
+/// Link speed in Mb/s from STATUS bits 7:6 (00=10, 01=100, 1x=1000), 0 when
+/// the link is down or no device is mapped.
+pub fn speed_mbps() -> u32 {
+    if !link_up() {
+        return 0;
+    }
+    match (reg_read(REG_STATUS) >> 6) & 3 {
+        0 => 10,
+        1 => 100,
+        _ => 1000,
+    }
 }
 
 fn log_hex(label: &[u8], v: u32) {
@@ -424,6 +462,7 @@ pub fn transmit(buf: &[u8]) -> bool {
         TX_TAIL = (i + 1) % TX_DESC_COUNT;
         reg_write(REG_TDT, TX_TAIL as u32);
     }
+    crate::kstats::net_tx(buf.len());
     true
 }
 
@@ -442,6 +481,7 @@ pub fn receive(out: &mut [u8]) -> Option<usize> {
         rx_status_set(next, 0);
         RX_TAIL = next;
         reg_write(REG_RDT, RX_TAIL as u32);
+        crate::kstats::net_rx(len);
         Some(len)
     }
 }

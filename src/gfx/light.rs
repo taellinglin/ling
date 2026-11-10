@@ -243,11 +243,50 @@ pub fn compute_lit_color_vertices3(
     lights: &[Light],
     ambient: f32,
 ) -> (u32, u32, u32) {
-    (
-        compute_lit_color_linear(base, na, va, lights, ambient),
-        compute_lit_color_linear(base, nb, vb, lights, ambient),
-        compute_lit_color_linear(base, nc, vc, lights, ambient),
-    )
+    // Same model as three `compute_lit_color_linear` calls, restructured for the
+    // per-triangle hot path (every draw_triangle_3d / mesh_draw triangle): each
+    // normal is normalised once, the light loop is outermost so a light's fields
+    // are loaded once for all three vertices, and per light-vertex there is one
+    // sqrt and one divide (|n·d|/dist, dist·(1/radius)) instead of a sqrt and
+    // four divides.
+    let br = ((base >> 16) & 0xFF) as f32;
+    let bg = ((base >> 8) & 0xFF) as f32;
+    let bb = (base & 0xFF) as f32;
+    let amb = [br * ambient, bg * ambient, bb * ambient];
+    let flat = pack(amb[0].min(255.0), amb[1].min(255.0), amb[2].min(255.0));
+    if lights.is_empty() {
+        return (flat, flat, flat);
+    }
+    let unit = |n: [f32; 3]| -> Option<[f32; 3]> {
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if len < 1e-6 { None } else { Some([n[0] / len, n[1] / len, n[2] / len]) }
+    };
+    let ns = [unit(na), unit(nb), unit(nc)];
+    let vs = [va, vb, vc];
+    let mut acc = [amb; 3];
+    for l in lights {
+        let inv_r = if l.radius > 0.0 { 1.0 / l.radius } else { 0.0 };
+        let (kr, kg, kb) = (br * l.r * l.intensity, bg * l.g * l.intensity, bb * l.b * l.intensity);
+        for k in 0..3 {
+            let Some(n) = ns[k] else { continue };
+            let dx = l.x - vs[k][0];
+            let dy = l.y - vs[k][1];
+            let dz = l.z - vs[k][2];
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-6);
+            let atten = if l.radius > 0.0 { (1.0 - dist * inv_r).max(0.0) } else { 1.0 };
+            if atten <= 0.0 {
+                continue;
+            }
+            // |dot|: both faces lit (see the module notes)
+            let raw = ((n[0] * dx + n[1] * dy + n[2] * dz) / dist).abs().min(1.0);
+            let shaded = raw * atten;
+            acc[k][0] += kr * shaded;
+            acc[k][1] += kg * shaded;
+            acc[k][2] += kb * shaded;
+        }
+    }
+    let out = |k: usize| if ns[k].is_none() { flat } else { pack(acc[k][0].min(255.0), acc[k][1].min(255.0), acc[k][2].min(255.0)) };
+    (out(0), out(1), out(2))
 }
 
 #[cfg(test)]
@@ -360,6 +399,27 @@ mod tests {
         let three =
             compute_lit_color_vertices3(base, normal, normal, normal, va, vb, vc, &[light], 0.1);
         assert_eq!(one, three);
+    }
+
+    #[test]
+    fn fast_vertex_lighting_matches_reference_model() {
+        let lights: Vec<Light> = (0..5)
+            .map(|i| Light { x: i as f32 * 2.0 - 4.0, y: 3.0, z: 1.0 + i as f32, r: 1.0, g: 0.7, b: 0.4, intensity: 0.9, radius: if i == 2 { 0.0 } else { 9.0 } })
+            .collect();
+        let mut worst = 0i32;
+        for t in 0..2000 {
+            let f = t as f32;
+            let n = [(f * 0.3).sin(), (f * 0.7).cos(), (f * 1.1).sin()];
+            let v = [[(f * 0.13).sin() * 6.0, (f * 0.29).cos() * 3.0, (f * 0.41).sin() * 6.0], [f.sin(), 0.5, f.cos()], [0.0, -1.0, (f * 0.05).sin() * 8.0]];
+            let (a, b, c) = compute_lit_color_vertices(0xC08050, n, v[0], v[1], v[2], &lights, 0.15);
+            for (got, vk) in [(a, v[0]), (b, v[1]), (c, v[2])] {
+                let want = compute_lit_color_linear(0xC08050, n, vk, &lights, 0.15);
+                for sh in [0, 8, 16] {
+                    worst = worst.max((((got >> sh) & 255) as i32 - ((want >> sh) & 255) as i32).abs());
+                }
+            }
+        }
+        assert!(worst <= 1, "fast vertex lighting drifted by {worst} levels");
     }
 
     #[test]

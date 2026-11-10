@@ -13,7 +13,7 @@ default = []
 # Enable the CUDA backend (NVIDIA only). Requires the CUDA toolkit/driver at
 # runtime; kernels are compiled on the fly with NVRTC. Off by default so the
 # regular build is pure-Rust and runs everywhere.
-cuda = ["dep:cudarc"]
+cuda = ["dep:cudarc", "dep:libloading"]
 
 [dependencies]
 # Data-parallel CPU fallback: rayon spreads the N-body / projection loops across
@@ -28,6 +28,8 @@ rayon = "1.10"
 [target.'cfg(not(target_arch = "aarch64"))'.dependencies]
 # (not for aarch64 / Raspberry Pi 5: the CUDA backend is compiled out there, see lib.rs)
 cudarc = { version = "0.12", optional = true, default-features = false, features = ["driver", "nvrtc", "dynamic-linking", "cuda-12060"] }
+# probe libcuda / libnvrtc before cudarc does (it panics when they are missing)
+libloading = { version = "0.8", optional = true }
 
 [lib]
 name = "ling_gpu"

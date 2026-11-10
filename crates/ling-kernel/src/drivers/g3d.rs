@@ -127,6 +127,13 @@ fn lerp_rgb(a: u32, b: u32, t: f32) -> u32 {
 fn nums(v: &[f32]) -> u64 {
     list_from(v.iter().map(|&x| num(x as f64)).collect())
 }
+/// A list argument as f32s (empty when it is not a list).
+fn flist(args: &[u64], i: usize) -> Vec<f32> {
+    match args.get(i) {
+        Some(&v) if is_list(v) => list_items(v).iter().map(|&x| to_f64(x) as f32).collect(),
+        _ => Vec::new(),
+    }
+}
 /// `rot` argument: a yaw angle or a row-major 3x3 list.
 fn rot_from(args: &[u64], i: usize) -> [f32; 9] {
     if let Some(&v) = args.get(i) {
@@ -514,11 +521,79 @@ struct Cam {
     t: V3,
     /// Screen centre override (`set_camera_center`); None = the window centre.
     center: Option<(f32, f32)>,
+    /// `set_camera_hyper(r, strength, hx, hy, hz)`: r 0 = off.
+    hyp: [f32; 5],
+    /// tan of the half view angle (centre x / focal), for the warp's view cone.
+    tan_h: f32,
 }
 
 impl Cam {
+    /// The host's hyperbolic warp (`gfx/camera.rs` `hyper`): around the hub
+    /// (hx, hz) distance compresses like a Poincare disc and the ground
+    /// saddles; only points in front of the lens and near the view bend.
+    #[inline]
+    fn warp(&self, p: V3) -> V3 {
+        let r = self.hyp[0];
+        if r <= 0.0 {
+            return p;
+        }
+        let (vx, vy, vz) = (p[0] - self.t[0], p[1] - self.t[1], p[2] - self.t[2]);
+        let qx = vx * self.cry - vz * self.sry;
+        let qz1 = vx * self.sry + vz * self.cry;
+        let qy = vy * self.crx - qz1 * self.srx;
+        let qz = vy * self.srx + qz1 * self.crx;
+        let eye = qz + self.zdist;
+        let k_front = ((eye - 1.0) / 6.0).clamp(0.0, 1.0);
+        if k_front <= 0.0 {
+            return p;
+        }
+        let q = sqrt(qx * qx + qy * qy) / (eye.max(0.1) * self.tan_h.max(0.05));
+        let k = k_front * ((1.8 - q) / 0.6).clamp(0.0, 1.0);
+        if k <= 0.0 {
+            return p;
+        }
+        let (hx, hy, hz) = (self.hyp[2], self.hyp[3], self.hyp[4]);
+        let (mut dx, mut dz) = (p[0] - hx, p[2] - hz);
+        let d = sqrt(dx * dx + dz * dz);
+        if d > 1e-4 {
+            let sc = r * libm::tanhf(d / r) / d;
+            dx *= sc;
+            dz *= sc;
+        }
+        let u = dx * self.cry - dz * self.sry;
+        let v = dx * self.sry + dz * self.cry;
+        let raw = self.hyp[1] * (v * v - u * u) / r;
+        let fy = ((p[1] - hy) / 12.0).clamp(-1.0, 1.0);
+        let wy2 = p[1] + 9.0 * libm::tanhf(raw / 9.0) * fy;
+        [p[0] + (hx + dx - p[0]) * k, p[1] + (wy2 - p[1]) * k, p[2] + (hz + dz - p[2]) * k]
+    }
+    /// The edge midpoints (ab, bc, ca) of a triangle the lens would visibly bend between its
+    /// corners, else `None` -- see the host's game3d `hyper_split` for the error bound.
+    fn hyper_split(&self, wp: &[V3; 3]) -> Option<[V3; 3]> {
+        let r = self.hyp[0];
+        if r <= 0.0 {
+            return None;
+        }
+        let e2 = |i: usize, j: usize| {
+            let (dx, dz) = (wp[i][0] - wp[j][0], wp[i][2] - wp[j][2]);
+            dx * dx + dz * dz
+        };
+        let longest = e2(0, 1).max(e2(1, 2)).max(e2(2, 0));
+        let s = self.hyp[1].abs().max(0.01);
+        if longest <= (0.6 * r / s).max(4.0) || longest > 64.0 * 64.0 {
+            return None;
+        }
+        let cx = (wp[0][0] + wp[1][0] + wp[2][0]) / 3.0 - self.hyp[2];
+        let cz = (wp[0][2] + wp[1][2] + wp[2][2]) / 3.0 - self.hyp[4];
+        let reach = r * 2.5 + 64.0;
+        if cx * cx + cz * cz > reach * reach {
+            return None;
+        }
+        Some([lerp3(wp[0], wp[1], 0.5), lerp3(wp[1], wp[2], 0.5), lerp3(wp[2], wp[0], 0.5)])
+    }
     #[inline]
     fn depth(&self, p: V3) -> f32 {
+        let p = self.warp(p);
         let wx = p[0] - self.t[0];
         let wy = p[1] - self.t[1];
         let wz = p[2] - self.t[2];
@@ -528,6 +603,7 @@ impl Cam {
     /// (screen x, screen y, camera depth) with the view's centre and focal length.
     #[inline]
     fn project(&self, p: V3, cx: f32, cy: f32, focal: f32) -> (f32, f32, f32) {
+        let p = self.warp(p);
         let wx = p[0] - self.t[0];
         let wy = p[1] - self.t[1];
         let wz = p[2] - self.t[2];
@@ -631,12 +707,41 @@ fn light_at(lights: &[Light], amb: f32, p: V3) -> V3 {
     l
 }
 
+/// A pixel / depth plane the span loop indexes. A raw pointer, not a slice,
+/// because several cores rasterize into it at once -- each into its own rows
+/// (`Env::y_lo..y_hi`), so no pixel is ever written by two of them.
+#[derive(Clone, Copy)]
+struct Px<T> {
+    p: *mut T,
+    len: usize,
+}
+
+impl<T> core::ops::Index<usize> for Px<T> {
+    type Output = T;
+    #[inline(always)]
+    fn index(&self, i: usize) -> &T {
+        debug_assert!(i < self.len);
+        unsafe { &*self.p.add(i) }
+    }
+}
+
+impl<T> core::ops::IndexMut<usize> for Px<T> {
+    #[inline(always)]
+    fn index_mut(&mut self, i: usize) -> &mut T {
+        debug_assert!(i < self.len);
+        unsafe { &mut *self.p.add(i) }
+    }
+}
+
 /// Everything the span loop needs besides the triangle itself.
 struct Env<'a> {
-    buf: &'a mut [u32],
+    buf: Px<u32>,
     bw: usize,
     bh: usize,
-    zb: &'a mut [f32],
+    zb: Px<f32>,
+    /// The rows this call may touch: a band of the target when the cores split a batch.
+    y_lo: i32,
+    y_hi: i32,
     tex: Option<&'a Tex>,
     lights: &'a [Light],
     fog_color: u32,
@@ -674,8 +779,8 @@ fn raster(env: &mut Env, v: &[A; 3], p: &Params) {
     if t2.y - t0.y < 1e-6 {
         return;
     }
-    let y_start = (ceil(t0.y - 0.5) as i32).max(0);
-    let y_end = (ceil(t2.y - 0.5) as i32).min(bh); // exclusive
+    let y_start = (ceil(t0.y - 0.5) as i32).max(0).max(env.y_lo);
+    let y_end = (ceil(t2.y - 0.5) as i32).min(bh).min(env.y_hi); // exclusive
     if y_start >= y_end {
         return;
     }
@@ -784,7 +889,7 @@ fn raster(env: &mut Env, v: &[A; 3], p: &Params) {
                 1 => {
                     for px in x..xe {
                         let idx = row + px as usize;
-                        if !ztest || iw > env.zb[idx] {
+                        if !ztest || iw >= env.zb[idx] {
                             let sr = ((mr >> 8).clamp(0, 256) * 255) >> 8;
                             let sg = ((mg >> 8).clamp(0, 256) * 255) >> 8;
                             let sb = ((mb >> 8).clamp(0, 256) * 255) >> 8;
@@ -803,7 +908,7 @@ fn raster(env: &mut Env, v: &[A; 3], p: &Params) {
                 2 => {
                     for px in x..xe {
                         let idx = row + px as usize;
-                        if !ztest || iw > env.zb[idx] {
+                        if !ztest || iw >= env.zb[idx] {
                             let t = texpx[((((vv >> 16) as u32) & mask) << tsh | (((u >> 16) as u32) & mask)) as usize];
                             let a = t >> 24;
                             if a > 0 {
@@ -840,7 +945,7 @@ fn raster(env: &mut Env, v: &[A; 3], p: &Params) {
                 _ => {
                     for px in x..xe {
                         let idx = row + px as usize;
-                        if !ztest || iw > env.zb[idx] {
+                        if !ztest || iw >= env.zb[idx] {
                             let t = if texpx.is_empty() { 0xFFFF_FFFFu32 } else { texpx[((((vv >> 16) as u32) & mask) << tsh | (((u >> 16) as u32) & mask)) as usize] };
                             let mut a = ((t >> 24) * alpha8) >> 8;
                             if hole_on && a > 0 && z < p.hole[3] {
@@ -1120,6 +1225,9 @@ struct State {
     bands: u32,
     blend: u8,
     depth_test: bool,
+    /// `set_cull(mode)`, as the host's: 0 off (double-sided) · 1 drop triangles wound clockwise on
+    /// screen · 2 drop counter-clockwise · 3 auto (meshes keep the cull their draw call asks for).
+    cull: u8,
     zbuf: Vec<f32>,
     zw: usize,
     zh: usize,
@@ -1145,6 +1253,17 @@ struct State {
     rw: usize,
     rh: usize,
     frame_open: bool,
+    /// The window's pixels at the start of a layered frame (decimated like `rbuf`): a 3-D pixel is one
+    /// that differs from it, and only those are written back to the window.
+    rback: Vec<u32>,
+    /// 8-row bands of the layer already filled from the window; the rect (x0, y0, x1, y1) 3-D drew on.
+    band_ok: Vec<bool>,
+    dirty: [usize; 4],
+    rmask: Vec<u8>,
+    /// `flush_3d_clip` was used: 3-D then renders in a layer even at full scale, so the clip can crop it.
+    clip_seen: bool,
+    /// The program that set the render scale; another program starting resets it.
+    app: String,
     win_w: usize,
     win_h: usize,
     /// Microseconds spent rasterizing / post-processing / upscaling this frame.
@@ -1160,6 +1279,125 @@ struct State {
     ramp_on: bool,
     drew_3d: bool,
     post_done: bool,
+    /// `.lmesh` colour meshes (`mesh_load` / `mesh_draw`).
+    cmeshes: Vec<CMesh>,
+    /// glTF (model, mesh) -> texture id in `texs`, built on first draw.
+    gltex: BTreeMap<(usize, usize), u32>,
+    /// `tm_lens_guard`: triangles with a corner this close to the near plane are dropped.
+    lens_guard: f32,
+    /// Finished `terrain_grid_start` jobs by id (computed at once; polled later).
+    tgrids: Vec<(String, TGrid)>,
+    tgrid_seq: u32,
+    /// Triangles projected but not rasterized yet, all for `batch_target` (pixels, width, height):
+    /// rasterized together by `sync`, split over the cores in bands of rows.
+    batch: Vec<([A; 3], Params)>,
+    batch_target: (usize, usize, usize),
+    /// Their summed bounding-box area in pixels (decides whether splitting is worth it).
+    batch_area: f32,
+}
+
+/// Triangles are waiting in the batch. `lingrt::ling_builtin` reads this before every builtin and
+/// rasterizes them first unless the builtin is one that only adds more (`batch_ok`), so nothing
+/// else ever sees the target before the triangles drawn earlier are on it.
+pub static mut PENDING: bool = false;
+
+/// Builtins that may run while triangles wait: they only queue more, move the camera, set the pen,
+/// or compute -- they never read or write pixels, resize a buffer, or change what rasterizing reads
+/// (lights, fog, depth, textures, the render scale). Anything not listed draws the batch first.
+pub fn batch_ok(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"draw_triangle_3d"
+            | b"triangle3d"
+            | b"mesh_draw"
+            | b"txm_draw"
+            | b"txm_quad"
+            | b"txm_tri"
+            | b"gltf_draw"
+            | b"gltf_anim_draw"
+            | b"gltf_anim_draw_tex"
+            | b"gltf_pose_draw"
+            | b"gltf_pose_draw_tex"
+            | b"gltf_mesh_show"
+            | b"gltf_mesh_show_list"
+            | b"image_pixel_u16"
+            | b"image_height_tri"
+            | b"gltf_mesh_tint"
+            | b"gltf_bounds"
+            | b"gltf_tris"
+            | b"gltf_anim_count"
+            | b"gltf_anim_dur"
+            | b"terrain_draw_grid"
+            | b"terrain_elev"
+            | b"project_3d"
+            | b"hyper_warp"
+            | b"mouse_ray"
+            | b"set_camera"
+            | b"set_camera_pos"
+            | b"move_camera"
+            | b"set_camera_hyper"
+            | b"cube"
+            | b"box"
+            | b"sphere"
+            | b"cylinder"
+            | b"cone"
+            | b"capsule"
+            | b"torus"
+            | b"frustum"
+            | b"tm_draw"
+            | b"tm_draw_lit"
+            | b"tm_quad"
+            | b"tm_billboard"
+            | b"coll_sphere"
+            | b"coll_ray"
+            | b"set_color"
+            | b"set_alpha"
+            | b"set_blend"
+            | b"sin"
+            | b"cos"
+            | b"tan"
+            | b"sqrt"
+            | b"abs"
+            | b"floor"
+            | b"ceil"
+            | b"round"
+            | b"min"
+            | b"max"
+            | b"clamp"
+            | b"atan2"
+            | b"pow"
+            | b"exp"
+            | b"len"
+            | b"list_get"
+            | b"list_set"
+            | b"list_push"
+            | b"st_get"
+            | b"st_set"
+            | b"lerp"
+    )
+}
+
+/// Rasterize whatever waits in the batch (see [`PENDING`]).
+pub fn sync_pending() {
+    if unsafe { PENDING } {
+        st().sync();
+    }
+}
+
+/// An `.lmesh`: unlit triangles with one colour each.
+struct CMesh {
+    pos: Vec<V3>,
+    col: Vec<[u8; 3]>,
+}
+
+/// One `terrain_grid_start` result (the host's TerrainGridResult).
+struct TGrid {
+    bx: f64,
+    bz: f64,
+    corners: Vec<f64>,
+    nx: Vec<f64>,
+    ny: Vec<f64>,
+    nz: Vec<f64>,
 }
 
 static mut G: Option<State> = None;
@@ -1168,7 +1406,7 @@ fn st() -> &'static mut State {
     let g = unsafe { &mut *(&raw mut G) };
     if g.is_none() {
         *g = Some(State {
-            cam: Cam { cry: 1.0, sry: 0.0, crx: 1.0, srx: 0.0, focal: 0.0, zdist: 5.0, t: [0.0; 3], center: None },
+            cam: Cam { cry: 1.0, sry: 0.0, crx: 1.0, srx: 0.0, focal: 0.0, zdist: 5.0, t: [0.0; 3], center: None, hyp: [0.0; 5], tan_h: 1.0 },
             lights: Vec::new(),
             ambient: 0.15,
             fog_color: 0,
@@ -1180,6 +1418,7 @@ fn st() -> &'static mut State {
             bands: 4,
             blend: 0,
             depth_test: true,
+            cull: 0,
             zbuf: Vec::new(),
             zw: 0,
             zh: 0,
@@ -1204,6 +1443,12 @@ fn st() -> &'static mut State {
             rw: 0,
             rh: 0,
             frame_open: false,
+            rback: Vec::new(),
+            band_ok: Vec::new(),
+            dirty: [usize::MAX, usize::MAX, 0, 0],
+            rmask: Vec::new(),
+            clip_seen: false,
+            app: String::new(),
             win_w: 0,
             win_h: 0,
             raster_us: 0,
@@ -1216,6 +1461,14 @@ fn st() -> &'static mut State {
             ramp_on: true,
             drew_3d: false,
             post_done: false,
+            cmeshes: Vec::new(),
+            gltex: BTreeMap::new(),
+            lens_guard: 0.0,
+            tgrids: Vec::new(),
+            tgrid_seq: 0,
+            batch: Vec::new(),
+            batch_target: (0, 0, 0),
+            batch_area: 0.0,
         });
     }
     g.as_mut().unwrap()
@@ -1549,12 +1802,15 @@ impl State {
         (cx, cy, focal)
     }
 
-    /// Where 3-D pixels go: the scaled buffer (opened from the window's current
-    /// contents) below scale 1, else the window itself.
+    /// Where 3-D pixels go for code that writes anywhere (lines, wire shapes): the whole layer, backdrop
+    /// included (a layer is scaled below scale 1, or whenever `flush_3d_clip` is in use so the clip can
+    /// crop it), else the window itself.
     fn target(&mut self) -> Option<(*mut u32, usize, usize)> {
         self.win_dims()?;
-        if self.scale < 0.999 {
+        if self.layered() {
             self.open_frame();
+            self.ensure_rows(0, self.rh);
+            self.dirty = [0, 0, self.rw, self.rh];
             Some((self.rbuf.as_mut_ptr(), self.rw, self.rh))
         } else {
             let (buf, w, h) = crate::lingapp::surface()?;
@@ -1562,53 +1818,152 @@ impl State {
         }
     }
 
-    /// Start a scaled frame: the window's pixels, decimated, become the backdrop.
+    /// The open layer without preparing any of it (the caller prepares the rows it draws on).
+    fn target_layer(&mut self) -> Option<(*mut u32, usize, usize)> {
+        self.win_dims()?;
+        self.open_frame();
+        Some((self.rbuf.as_mut_ptr(), self.rw, self.rh))
+    }
+
+    /// The open layer, or the window when 3-D is not layered (the post pass works on what exists).
+    fn target_layer_or_window(&mut self) -> Option<(*mut u32, usize, usize)> {
+        if self.layered() {
+            self.target_layer()
+        } else {
+            self.target()
+        }
+    }
+
+    fn layered(&self) -> bool {
+        self.scale < 0.999 || self.clip_seen
+    }
+
+    /// Start a layered frame. Nothing is copied yet: the window's pixels (the backdrop 3-D blends over)
+    /// are decimated into the layer in 8-row bands as drawing reaches them, so a small batch (a portrait)
+    /// costs what it touches, not the whole window.
     fn open_frame(&mut self) {
         if self.frame_open {
             return;
         }
-        let Some((win, ww, wh)) = crate::lingapp::surface() else { return };
+        let Some((_, _, _)) = crate::lingapp::surface() else { return };
         let (rw, rh) = self.tdims();
         if self.rbuf.len() != rw * rh {
             self.rbuf = vec![0u32; rw * rh];
+            self.rback = vec![0u32; rw * rh];
         }
         self.rw = rw;
         self.rh = rh;
-        let step = ((ww << 16) / rw) as u32;
-        for y in 0..rh {
-            let sy = (y * wh / rh).min(wh - 1);
-            let src = &win[sy * ww..sy * ww + ww];
-            let row = &mut self.rbuf[y * rw..y * rw + rw];
-            let mut fx = 0u32;
-            for px in row.iter_mut() {
-                *px = src[((fx >> 16) as usize).min(ww - 1)];
-                fx += step;
-            }
-        }
+        self.band_ok.clear();
+        self.band_ok.resize(rh.div_ceil(8), false);
+        self.rmask.clear();
+        self.rmask.resize(rw * rh, 0);
+        self.dirty = [usize::MAX, usize::MAX, 0, 0];
         self.frame_open = true;
     }
 
-    /// End a scaled frame: the scaled buffer goes back onto the window (a smooth
-    /// 2x expansion at half scale, nearest otherwise).
-    fn close_frame(&mut self) {
+    /// Make rows `y0..y1` of the layer hold the window's pixels (and the same in `rback`), once.
+    fn ensure_rows(&mut self, y0: usize, y1: usize) {
+        let t0 = crate::arch::timer::now_us();
+        let Some((win, ww, wh)) = crate::lingapp::surface() else { return };
+        let (rw, rh) = (self.rw, self.rh);
+        let y1 = y1.min(rh);
+        if y0 >= y1 || rw == 0 {
+            return;
+        }
+        let step = ((ww << 16) / rw) as u32;
+        for b in y0 / 8..=(y1 - 1) / 8 {
+            if self.band_ok[b] {
+                continue;
+            }
+            self.band_ok[b] = true;
+            for y in b * 8..((b + 1) * 8).min(rh) {
+                let sy = (y * wh / rh).min(wh - 1);
+                let src = &win[sy * ww..sy * ww + ww];
+                {
+                    let row = &mut self.rbuf[y * rw..y * rw + rw];
+                    if rw == ww {
+                        row.copy_from_slice(src);
+                    } else {
+                        let mut fx = 0u32;
+                        for px in row.iter_mut() {
+                            *px = src[((fx >> 16) as usize).min(ww - 1)];
+                            fx += step;
+                        }
+                    }
+                }
+                self.rback[y * rw..y * rw + rw].copy_from_slice(&self.rbuf[y * rw..y * rw + rw]);
+            }
+        }
+        crate::prof::add(crate::prof::LAYER, crate::arch::timer::now_us().saturating_sub(t0));
+    }
+
+    /// Which layer pixels (inside the rect drawn on) 3-D changed from the backdrop; `keep` adds to the mask.
+    /// Rows this frame never prepared are skipped: nothing was drawn there, and they still hold an older
+    /// batch's pixels (the portrait's body below its well), which differ from an equally old backdrop.
+    fn make_mask(&mut self, keep: bool) {
+        self.sync();
+        let [x0, y0, x1, y1] = self.dirty;
+        if x0 >= x1 || y0 >= y1 || self.rmask.len() != self.rbuf.len() {
+            return;
+        }
+        let rw = self.rw;
+        for y in y0..y1.min(self.rh) {
+            if !self.band_ok.get(y / 8).copied().unwrap_or(false) {
+                continue;
+            }
+            let r = y * rw + x0..y * rw + x1.min(rw);
+            for ((m, a), b) in self.rmask[r.clone()].iter_mut().zip(&self.rbuf[r.clone()]).zip(&self.rback[r]) {
+                let d = (a != b) as u8;
+                *m = if keep { *m | d } else { d };
+            }
+        }
+    }
+
+    /// End a layered frame: the pixels 3-D drew (inside `clip`, window pixels [x, y, w, h], when given) go
+    /// back onto the window -- a smooth 2x expansion at half scale, nearest otherwise. Everything else on
+    /// the window (the HUD and text drawn before this batch, the sky) is left at its native pixels.
+    fn close_frame(&mut self, clip: Option<[i32; 4]>) {
+        self.sync();
         if !self.frame_open {
             return;
         }
         self.frame_open = false;
         let Some((win, ww, wh)) = crate::lingapp::surface() else { return };
         let (rw, rh) = (self.rw, self.rh);
-        if rw == 0 || rh == 0 || self.rbuf.len() < rw * rh {
+        if rw == 0 || rh == 0 || self.rbuf.len() < rw * rh || self.rmask.len() < rw * rh {
             return;
         }
-        let src = &self.rbuf;
+        let (cx0, cy0, cx1, cy1) = match clip {
+            Some([x, y, w, h]) => (x.max(0) as usize, y.max(0) as usize, ((x + w).max(0) as usize).min(ww), ((y + h).max(0) as usize).min(wh)),
+            None => (0, 0, ww, wh),
+        };
+        if cx0 >= cx1 || cy0 >= cy1 {
+            return;
+        }
+        // only the rect 3-D drew on (a portrait batch is tiny; the whole layer is not walked)
+        let [dx0, dy0, dx1, dy1] = self.dirty;
+        if dx0 >= dx1 || dy0 >= dy1 {
+            return;
+        }
+        let (dx1, dy1) = (dx1.min(rw), dy1.min(rh));
+        let (src, mask, ok) = (&self.rbuf, &self.rmask, &self.band_ok);
         if ww + 1 >= 2 * rw && wh + 1 >= 2 * rh && ww <= 2 * rw && wh <= 2 * rh {
-            for sy in 0..rh {
+            let put = |win: &mut [u32], x: usize, y: usize, v: u32| {
+                if x >= cx0 && x < cx1 && y >= cy0 && y < cy1 {
+                    win[y * ww + x] = v;
+                }
+            };
+            for sy in (cy0 / 2).max(dy0)..((cy1 + 1) / 2).min(rh).min(dy1) {
                 let s = &src[sy * rw..sy * rw + rw];
-                let ny = (sy + 1).min(rh - 1);
+                // never blend with a row this frame did not prepare (it holds stale pixels)
+                let ny = if sy + 1 < rh && ok.get((sy + 1) / 8).copied().unwrap_or(false) { sy + 1 } else { sy };
                 let n = &src[ny * rw..ny * rw + rw];
                 let y0 = 2 * sy;
                 let y1 = (y0 + 1).min(wh - 1);
-                for sx in 0..rw {
+                for sx in (cx0 / 2).max(dx0)..((cx1 + 1) / 2).min(rw).min(dx1) {
+                    if mask[sy * rw + sx] == 0 {
+                        continue;
+                    }
                     let a = s[sx];
                     let b = s[(sx + 1).min(rw - 1)];
                     let c = n[sx];
@@ -1616,22 +1971,29 @@ impl State {
                     let x0 = 2 * sx;
                     let x1 = (x0 + 1).min(ww - 1);
                     let ab = avg2(a, b);
-                    win[y0 * ww + x0] = a;
-                    win[y0 * ww + x1] = ab;
-                    win[y1 * ww + x0] = avg2(a, c);
-                    win[y1 * ww + x1] = avg2(ab, avg2(c, d));
+                    put(win, x0, y0, a);
+                    put(win, x1, y0, ab);
+                    put(win, x0, y1, avg2(a, c));
+                    put(win, x1, y1, avg2(ab, avg2(c, d)));
                 }
             }
         } else {
             let step = ((rw << 16) / ww) as u32;
-            for y in 0..wh {
+            for y in cy0..cy1 {
                 let sy = (y * rh / wh).min(rh - 1);
+                if sy < dy0 || sy >= dy1 {
+                    continue;
+                }
                 let s = &src[sy * rw..sy * rw + rw];
+                let m = &mask[sy * rw..sy * rw + rw];
                 let row = &mut win[y * ww..y * ww + ww];
-                let mut fx = 0u32;
-                for px in row.iter_mut() {
-                    *px = s[((fx >> 16) as usize).min(rw - 1)];
-                    fx += step;
+                let mut fx = step.wrapping_mul(cx0 as u32);
+                for px in row[cx0..cx1].iter_mut() {
+                    let sx = ((fx >> 16) as usize).min(rw - 1);
+                    if m[sx] != 0 {
+                        *px = s[sx];
+                    }
+                    fx = fx.wrapping_add(step);
                 }
             }
         }
@@ -1639,22 +2001,63 @@ impl State {
 
     /// The toon post pass over the render target, once per frame: tone ramp, then ink.
     fn post(&mut self) {
+        self.sync();
         if self.post_done || !self.drew_3d {
+            return;
+        }
+        // a layer that is not open has nothing drawn in it (opening one would only re-blur the window)
+        if self.layered() && !self.frame_open {
             return;
         }
         self.post_done = true;
         let t0 = crate::arch::timer::now_us();
-        let Some((ptr, w, h)) = self.target() else { return };
+        if self.frame_open && self.toon_px > 0.0 {
+            // the ink lands a few pixels past the shapes, possibly in a band no triangle touched:
+            // prepare those bands first, or make_mask would leave the ink out
+            let px = if self.scale < 0.999 { self.toon_px * self.scale } else { self.toon_px };
+            let reach = (libm::ceilf(px) as usize + 2).div_ceil(8);
+            let nb = self.band_ok.len();
+            let near: Vec<usize> = (0..nb).filter(|&b| !self.band_ok[b] && (b.saturating_sub(reach)..(b + reach + 1).min(nb)).any(|k| self.band_ok[k])).collect();
+            for b in near {
+                self.ensure_rows(b * 8, b * 8 + 8);
+            }
+        }
+        let Some((ptr, w, h)) = self.target_layer_or_window() else { return };
         let buf = unsafe { core::slice::from_raw_parts_mut(ptr, w * h) };
         if self.ramp_on {
-            apply_ramp(buf, &self.ramp_lut);
+            if self.frame_open && self.rmask.len() == buf.len() {
+                // layered: tone only what 3-D drew, never the backdrop (the HUD / text under it)
+                let [x0, y0, x1, y1] = self.dirty;
+                if x0 < x1 && y0 < y1 {
+                    for y in y0..y1.min(h) {
+                        for x in x0..x1.min(w) {
+                            let i = y * w + x;
+                            if self.rmask[i] != 0 {
+                                apply_ramp(core::slice::from_mut(&mut buf[i]), &self.ramp_lut);
+                            }
+                        }
+                    }
+                }
+            } else {
+                apply_ramp(buf, &self.ramp_lut);
+            }
         }
         if self.toon_px > 0.0 && self.zw == w && self.zh == h {
             // the ink is specified in window pixels: thinner on a scaled target
             let px = if self.scale < 0.999 { self.toon_px * self.scale } else { self.toon_px };
             draw_outlines(buf, &self.zbuf, w, h, px, self.toon_color, self.toon_thresh);
+            if self.frame_open {
+                // the ink reaches a little past the shapes
+                let m = libm::ceilf(px) as usize + 2;
+                let [x0, y0, x1, y1] = self.dirty;
+                if x0 < x1 && y0 < y1 {
+                    self.dirty = [x0.saturating_sub(m), y0.saturating_sub(m), (x1 + m).min(w), (y1 + m).min(h)];
+                }
+            }
         }
-        self.raster_us += crate::arch::timer::now_us().saturating_sub(t0);
+        let dt = crate::arch::timer::now_us().saturating_sub(t0);
+        self.raster_us += dt;
+        crate::prof::add(crate::prof::POST, dt);
     }
 
     /// Pick the render scale for the next frame from this frame's pixel work
@@ -1688,7 +2091,9 @@ impl State {
 
     fn ensure_z(&mut self, bw: usize, bh: usize) {
         if self.zw != bw || self.zh != bh {
-            self.zbuf = vec![0.0; bw * bh];
+            // (keeps its allocation: a UI layer at display size flips the target every frame)
+            self.zbuf.clear();
+            self.zbuf.resize(bw * bh, 0.0);
             self.zw = bw;
             self.zh = bh;
             self.zclear = false;
@@ -1701,28 +2106,133 @@ impl State {
     /// Draw one screen-space triangle now (2-D sprites go to the window, 3-D to the target).
     fn draw_now(&mut self, v: &[A; 3], p: &Params) {
         let t0 = crate::arch::timer::now_us();
-        let got = if p.sprite { crate::lingapp::surface().map(|(b, w, h)| (b.as_mut_ptr(), w, h)) } else { self.target() };
+        let got = if p.sprite {
+            crate::lingapp::surface().map(|(b, w, h)| (b.as_mut_ptr(), w, h))
+        } else if self.layered() {
+            // a layer: prepare only the rows this triangle covers
+            let r = self.target_layer();
+            if let Some((_, bw, bh)) = r {
+                if v.iter().all(|a| a.x.is_finite() && a.y.is_finite()) {
+                    let lo = |f: fn(f32, f32) -> f32, g: fn(&A) -> f32, lim: usize| f(f(g(&v[0]), g(&v[1])), g(&v[2])).max(0.0).min(lim as f32);
+                    let x0 = lo(f32::min, |a| a.x, bw) as usize;
+                    let x1 = (lo(f32::max, |a| a.x, bw) as usize + 1).min(bw);
+                    let y0 = lo(f32::min, |a| a.y, bh) as usize;
+                    let y1 = (lo(f32::max, |a| a.y, bh) as usize + 1).min(bh);
+                    if x0 < x1 && y0 < y1 {
+                        self.ensure_rows(y0, y1);
+                        let d = &mut self.dirty;
+                        *d = [d[0].min(x0), d[1].min(y0), d[2].max(x1), d[3].max(y1)];
+                    }
+                }
+            }
+            r
+        } else {
+            self.target()
+        };
         let Some((ptr, bw, bh)) = got else { return };
-        let buf = unsafe { core::slice::from_raw_parts_mut(ptr, bw * bh) };
+        let key = (ptr as usize, bw, bh);
+        if !self.batch.is_empty() && self.batch_target != key {
+            self.sync();
+        }
         if !p.sprite {
             self.ensure_z(bw, bh);
             self.drew_3d = true;
         }
+        if let TexId::Id(i) = p.tex {
+            if i as usize >= self.texs.len() {
+                return;
+            }
+        }
         self.tris += 1;
-        let State { zbuf, texs, glow, soft, solid, lights, fog_color, fog_start, fog_end, cam, .. } = self;
-        let tex = match p.tex {
-            TexId::None => None,
-            TexId::Glow => Some(&*glow),
-            TexId::Soft => Some(&*soft),
-            TexId::Solid => Some(&*solid),
-            TexId::Id(i) => texs.get(i as usize),
-        };
-        if p.tex != TexId::None && tex.is_none() {
+        self.batch.push((*v, *p));
+        self.batch_target = key;
+        if v.iter().all(|a| a.x.is_finite() && a.y.is_finite()) {
+            let (x0, x1) = (v[0].x.min(v[1].x).min(v[2].x).max(0.0), v[0].x.max(v[1].x).max(v[2].x).min(bw as f32));
+            let (y0, y1) = (v[0].y.min(v[1].y).min(v[2].y).max(0.0), v[0].y.max(v[1].y).max(v[2].y).min(bh as f32));
+            self.batch_area += (x1 - x0).max(0.0) * (y1 - y0).max(0.0);
+        }
+        unsafe { PENDING = true };
+        crate::prof::count(crate::prof::C_TRIS, 1);
+        let dt = crate::arch::timer::now_us().saturating_sub(t0);
+        self.raster_us += dt;
+        if self.batch.len() >= 8192 {
+            self.sync();
+        }
+    }
+
+    /// Rasterize the batch onto its target. With more than one core and enough pixels to share,
+    /// the target is cut into bands of rows and every core draws all of the batch's triangles that
+    /// reach its bands, in order -- each pixel sees the same triangles in the same order as one
+    /// core drawing them one by one, so the image is identical.
+    fn sync(&mut self) {
+        unsafe { PENDING = false };
+        if self.batch.is_empty() {
             return;
         }
-        let mut env = Env { buf, bw, bh, zb: &mut zbuf[..], tex, lights: &lights[..], fog_color: *fog_color, fog_start: *fog_start, fog_end: *fog_end, zdist: cam.zdist };
-        raster(&mut env, v, p);
-        self.raster_us += crate::arch::timer::now_us().saturating_sub(t0);
+        let t0 = crate::arch::timer::now_us();
+        let (ptr, bw, bh) = self.batch_target;
+        let list = core::mem::take(&mut self.batch);
+        let area = core::mem::replace(&mut self.batch_area, 0.0);
+        let (zp, zlen) = (self.zbuf.as_mut_ptr(), self.zbuf.len());
+        let zok = zlen >= bw * bh;
+        {
+            let State { texs, glow, soft, solid, lights, fog_color, fog_start, fog_end, cam, .. } = &*self;
+            let buf = crate::par::Shared(ptr as *mut u32);
+            let zb = crate::par::Shared(zp);
+            let (fc, fs, fe, zd) = (*fog_color, *fog_start, *fog_end, cam.zdist);
+            let lights: &[Light] = &lights[..];
+            let band = |y_lo: usize, y_hi: usize| {
+                let mut env = Env {
+                    buf: Px { p: buf.get(), len: bw * bh },
+                    bw,
+                    bh,
+                    // sprites never test or write depth; 3-D targets always have a matching plane
+                    zb: Px { p: zb.get(), len: if zok { zlen } else { 0 } },
+                    y_lo: y_lo as i32,
+                    y_hi: y_hi as i32,
+                    tex: None,
+                    lights,
+                    fog_color: fc,
+                    fog_start: fs,
+                    fog_end: fe,
+                    zdist: zd,
+                };
+                for (v, p) in &list {
+                    if !zok && !p.sprite {
+                        continue;
+                    }
+                    env.tex = match p.tex {
+                        TexId::None => None,
+                        TexId::Glow => Some(glow),
+                        TexId::Soft => Some(soft),
+                        TexId::Solid => Some(solid),
+                        TexId::Id(i) => match texs.get(i as usize) {
+                            Some(t) => Some(t),
+                            None => continue,
+                        },
+                    };
+                    raster(&mut env, v, p);
+                }
+            };
+            // splitting costs a wake-up and every core walking the whole list: only for real work
+            let (chunks, per) = if area >= 24_000.0 { crate::par::row_chunks(bh, 8) } else { (1, bh.max(1)) };
+            if chunks <= 1 {
+                band(0, bh);
+            } else {
+                crate::par::for_each(chunks, &|c: usize| band(c * per, ((c + 1) * per).min(bh)));
+            }
+        }
+        let mut list = list;
+        list.clear();
+        self.batch = list;
+        let dt = crate::arch::timer::now_us().saturating_sub(t0);
+        self.raster_us += dt;
+        crate::prof::add(crate::prof::RASTER, dt);
+    }
+
+    /// The pen's cull for a draw that does not choose its own: modes 1 / 2 apply, 0 and 3 (auto) do not.
+    fn pen_cull(&self) -> u8 {
+        if self.cull == 1 || self.cull == 2 { self.cull } else { 0 }
     }
 
     /// Clip a world-space triangle against the near plane, project it and
@@ -1737,6 +2247,18 @@ impl State {
         let d = [self.cam.depth(wp[0]), self.cam.depth(wp[1]), self.cam.depth(wp[2])];
         if d[0] <= near && d[1] <= near && d[2] <= near {
             return 0;
+        }
+        // the hyperbolic lens bends vertices: a long triangle inside it is split at its edge
+        // midpoints so the ground bends smoothly (the host's game3d `hyper_split`)
+        if let Some(kids) = self.cam.hyper_split(&wp) {
+            let m2 = |a: [f32; 2], b: [f32; 2]| [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+            let (tab, tbc, tca) = (m2(uv[0], uv[1]), m2(uv[1], uv[2]), m2(uv[2], uv[0]));
+            let (cab, cbc, cca) = (lerp3(col[0], col[1], 0.5), lerp3(col[1], col[2], 0.5), lerp3(col[2], col[0], 0.5));
+            let [ab, bc, ca] = kids;
+            return self.push_tri([wp[0], ab, ca], [uv[0], tab, tca], [col[0], cab, cca], p, cull, bias)
+                + self.push_tri([ab, wp[1], bc], [tab, uv[1], tbc], [cab, col[1], cbc], p, cull, bias)
+                + self.push_tri([ca, bc, wp[2]], [tca, tbc, uv[2]], [cca, cbc, col[2]], p, cull, bias)
+                + self.push_tri([ab, bc, ca], [tab, tbc, tca], [cab, cbc, cca], p, cull, bias);
         }
         let mut cp: [(V3, [f32; 2], V3); 4] = [([0.0; 3], [0.0; 2], [0.0; 3]); 4];
         let mut cn = 0usize;
@@ -1776,7 +2298,10 @@ impl State {
                 return 0;
             }
         }
-        let immediate = p.zwrite && p.alpha > 0.97 && p.blend == 0;
+        // with the depth test off (set_depth_test(0)) opaque triangles are painter-sorted at flush,
+        // like the host's depth queue: drawn in submission order, a model's back faces (hair, the
+        // back of the head) would paint over its front (the face in the HUD portrait / doll)
+        let immediate = p.ztest && p.zwrite && p.alpha > 0.97 && p.blend == 0;
         let mut count = 0;
         for k in 1..cn - 1 {
             let tri = [tv[0], tv[k], tv[k + 1]];
@@ -1794,6 +2319,11 @@ impl State {
     /// Draw the translucent triangles kept since the last flush, far to near, run
     /// the post pass and put a scaled frame back onto the window.
     fn flush(&mut self) {
+        self.flush_in(None);
+    }
+
+    /// `flush`, putting only what lies inside `clip` ([x, y, w, h] in window pixels) onto the window.
+    fn flush_in(&mut self, clip: Option<[i32; 4]>) {
         if !self.deferred.is_empty() {
             let mut list = core::mem::take(&mut self.deferred);
             list.sort_by(|a, b| a.key.partial_cmp(&b.key).unwrap_or(core::cmp::Ordering::Equal));
@@ -1802,11 +2332,23 @@ impl State {
             }
             list.clear();
             self.deferred = list;
+            self.sync();
         }
+        let tm = crate::arch::timer::now_us();
+        if self.frame_open {
+            self.make_mask(false);
+        }
+        crate::prof::add(crate::prof::LAYER, crate::arch::timer::now_us().saturating_sub(tm));
         self.post();
         let t0 = crate::arch::timer::now_us();
-        self.close_frame();
-        self.raster_us += crate::arch::timer::now_us().saturating_sub(t0);
+        if self.frame_open {
+            // the ink outline also lands on pixels just outside the shapes: take them in
+            self.make_mask(true);
+        }
+        self.close_frame(clip);
+        let dt = crate::arch::timer::now_us().saturating_sub(t0);
+        self.raster_us += dt;
+        crate::prof::add(crate::prof::LAYER, dt);
     }
 
     /// `tm_wire(kind, x, y, z, size, rx, ry, rz, colour, detail, thick)`: a wireframe
@@ -1820,6 +2362,7 @@ impl State {
         let col = rgb(n(args, 8, 16777215.0));
         let detail = (n(args, 9, 12.0) as usize).clamp(3, 64);
         let thick = n(args, 10, 0.0) > 0.5;
+        self.sync();
         let Some((ptr, bw, bh)) = self.target() else { return };
         let buf = unsafe { core::slice::from_raw_parts_mut(ptr, bw * bh) };
         let (verts, edges) = wire_shape(kind, detail);
@@ -1881,6 +2424,7 @@ impl State {
                 2 => base_tube(if e0 > 0 { e0 } else { 20 }, 1.0),
                 3 => base_tube(if e0 > 0 { e0 } else { 20 }, 0.0),
                 4 => base_capsule(if e0 > 0 { e0 } else { 14 }, if e1 > 0 { e1 } else { 4 }),
+                6 => base_tube(if e0 > 0 { e0 } else { 24 }, e1 as f32 / 1000.0),
                 _ => base_torus(if e0 > 0 { e0 } else { 20 }, if e1 > 0 { e1 } else { 10 }, 0.3),
             };
             self.bases.insert(key, b);
@@ -1995,6 +2539,7 @@ impl State {
             }
         }
         if want_wire {
+            self.sync();
             let Some((ptr, bw, bh)) = self.target() else { return };
             let buf = unsafe { core::slice::from_raw_parts_mut(ptr, bw * bh) };
             let (vcx, vcy, focal) = self.view();
@@ -2037,7 +2582,10 @@ impl State {
         let (us, vs) = (f(args, 12, 1.0), f(args, 13, 1.0));
         let shade = f(args, 14, 0.0).clamp(0.0, 1.0);
         let blend = n(args, 15, 0.0) as u8;
-        let cull = n(args, 16, 0.0) as u8;
+        let cull = match n(args, 16, 0.0) as u8 {
+            0 => self.pen_cull(),
+            c => c,
+        };
         let lit_amb = f(args, 17, -1.0);
         if self.win_dims().is_none() {
             return 0;
@@ -2179,10 +2727,83 @@ impl State {
                         self.billboard(TexId::Id(p.tex), p.p, size, p.spin * (p.max - p.life), col, p.alpha * fade.min(1.0), 0);
                     }
                 },
+                3..=7 => self.pixel_spark(p, size, col, fade * p.alpha),
                 _ => self.billboard(TexId::Glow, p.p, size, 0.0, col, fade * p.alpha, 1),
             }
         }
         self.parts = parts;
+    }
+
+    /// The pixel kinds (3 spark · 4 twinkle · 5 crackle · 6 trail · 7 flicker):
+    /// a crisp additive square `size` pixels across at 720p, snapped to the grid.
+    /// Same look as the desktop port (ling/src/gfx/particles.rs).
+    fn pixel_spark(&mut self, p: &Part, size: f32, col: u32, alpha: f32) {
+        if self.win_dims().is_none() {
+            return;
+        }
+        let hs = |x: u32| -> u32 {
+            let mut x = x ^ (x >> 16);
+            x = x.wrapping_mul(0x7feb_352d);
+            x ^= x >> 15;
+            x = x.wrapping_mul(0x846c_a68b);
+            x ^ (x >> 16)
+        };
+        let seed = p.max.to_bits() ^ p.v[0].to_bits().rotate_left(7);
+        let t = 1.0 - (p.life / p.max).clamp(0.0, 1.0);
+        let age = p.max - p.life;
+        let mut col = col;
+        let mut a = alpha;
+        match p.kind {
+            4 if t > 0.5 && hs(seed ^ (age * 24.0) as u32) & 3 == 0 => a *= 0.15,
+            5 if t > 0.35 => {
+                if hs(seed ^ (age * 30.0) as u32) % 100 < 30 {
+                    col = 0xfff0c8;
+                } else {
+                    a *= 0.05;
+                }
+            },
+            7 => a *= 0.6 + 0.4 * ((hs(seed ^ (age * 40.0) as u32) >> 8) as f32 / 16_777_216.0),
+            _ => {},
+        }
+        let (cx, cy, focal) = self.view();
+        let near = -self.cam.zdist + 0.05;
+        let (sx, sy, z) = self.cam.project(p.p, cx, cy, focal);
+        if z <= near + 0.05 {
+            return;
+        }
+        let fog_k = if p.kind == 7 && self.fog_end > self.fog_start && self.fog_end > 0.0 { ((z - self.fog_start) / (self.fog_end - self.fog_start)).clamp(0.0, 1.0) } else { 0.0 };
+        a *= 1.0 - fog_k;
+        if a <= 0.02 {
+            return;
+        }
+        let th = self.tdims().1 as f32;
+        let px = (th / 720.0).max(1.0);
+        let w = z + self.cam.zdist;
+        let boost = (14.0 / w.max(1e-3)).clamp(1.0, 2.0);
+        let half = libm::roundf(size * px * boost).max(1.0) * 0.5;
+        let (qx, qy) = (libm::roundf(sx), libm::roundf(sy));
+        let iw = 1.0 / w.max(1e-4);
+        let c3 = col3(col);
+        let tail = [p.p[0] - p.v[0] * 0.05, p.p[1] - p.v[1] * 0.05, p.p[2] - p.v[2] * 0.05];
+        let (tx, ty, tz) = self.cam.project(tail, cx, cy, focal);
+        let mut sq = |x: f32, y: f32, hh: f32, al: f32| {
+            let v = |x: f32, y: f32| A { x, y, iw, uw: 0.5 * iw, vw: 0.5 * iw, wx: 0.0, wy: 0.0, wz: 0.0, r: c3[0], g: c3[1], b: c3[2] };
+            let q = [v(x - hh, y - hh), v(x + hh, y - hh), v(x + hh, y + hh), v(x - hh, y + hh)];
+            let pp = Params { tex: TexId::Solid, alpha: al, blend: 1, zwrite: false, ztest: self.depth_test, lit: false, amb: 0.0, fog: false, hole: [0.0; 4], sprite: false };
+            self.deferred.push(Deferred { v: [q[0], q[1], q[2]], p: pp, key: iw });
+            self.deferred.push(Deferred { v: [q[0], q[2], q[3]], p: pp, key: iw });
+        };
+        sq(qx, qy, half, a);
+        if size >= 2.0 {
+            sq(qx, qy, half + px, a * 0.22);
+        }
+        if p.kind == 6 {
+            if tz > near + 0.05 {
+                for (f, m) in [(0.5f32, 0.55f32), (1.0, 0.3)] {
+                    sq(libm::roundf(sx + (tx - sx) * f), libm::roundf(sy + (ty - sy) * f), (half * 0.75).max(0.5), a * m);
+                }
+            }
+        }
     }
 
     fn pfx_push(&mut self, p: Part) {
@@ -2345,16 +2966,145 @@ impl State {
     }
 }
 
+/// `bench3d [frames] [triangles]`: rasterize a fixed scene of lit, depth-tested
+/// triangles into an offscreen 1920x1080 target with the same code path FLY for
+/// FUN and LingDev games use (`draw_now` -> batch -> banded `sync`), at 1 core
+/// and then at every power of two up to all of them, and report the frame times.
+/// The image must come out the same at every core count; a checksum says so.
+pub fn bench(arg: &str) -> String {
+    use alloc::format;
+    let mut it = arg.split_whitespace();
+    let frames: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(30).clamp(1, 600);
+    let ntri: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(20_000).clamp(1, 200_000);
+    let (w, h) = (1920usize, 1080usize);
+    let s = st();
+    s.sync();
+    // the scene: a deterministic field of triangles, near and far, overlapping
+    let mut seed = 0x1234_5678u32;
+    let mut rnd = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed >> 8) as f32 / 16_777_216.0
+    };
+    let mut tris: Vec<[A; 3]> = Vec::with_capacity(ntri);
+    for _ in 0..ntri {
+        let (cx, cy) = (rnd() * w as f32, rnd() * h as f32);
+        let size = 8.0 + rnd() * 70.0;
+        let iw = 0.05 + rnd() * 0.9;
+        let col = [0.2 + rnd() * 0.8, 0.2 + rnd() * 0.8, 0.2 + rnd() * 0.8];
+        let mut t = [A::default(); 3];
+        for k in 0..3 {
+            let a = (k as f32) * 2.094 + rnd() * 0.6;
+            t[k] = A { x: cx + libm::cosf(a) * size, y: cy + libm::sinf(a) * size, iw, uw: 0.0, vw: 0.0, wx: 0.0, wy: 0.0, wz: 0.0, r: col[0], g: col[1], b: col[2] };
+        }
+        tris.push(t);
+    }
+    let p = Params { tex: TexId::None, alpha: 1.0, blend: 0, zwrite: true, ztest: true, lit: false, amb: 0.0, fog: false, hole: [0.0; 4], sprite: false };
+    let mut buf = alloc::vec![0u32; w * h];
+    let online = crate::par::cores();
+    let mut counts = alloc::vec![1usize];
+    let mut c = 2;
+    while c < online {
+        counts.push(c);
+        c *= 2;
+    }
+    if online > 1 {
+        counts.push(online);
+    }
+    let mut out = format!("bench3d: {frames} frames of {ntri} lit, depth-tested triangles at {w}x{h} (offscreen)\n");
+    let mut base_ms = 0.0f64;
+    let mut base_sum = 0u64;
+    #[cfg(target_arch = "x86_64")]
+    let before = crate::arch::smp::cores();
+    for &n in &counts {
+        #[cfg(target_arch = "x86_64")]
+        crate::arch::smp::set_cores(n);
+        let t0 = crate::arch::timer::now_us();
+        for _ in 0..frames {
+            buf.fill(0x0010_1018);
+            s.ensure_z(w, h);
+            s.zbuf.fill(0.0);
+            for t in &tris {
+                s.batch.push((*t, p));
+            }
+            s.batch_target = (buf.as_mut_ptr() as usize, w, h);
+            s.batch_area = (w * h) as f32;
+            unsafe { PENDING = true };
+            s.sync();
+        }
+        let ms = crate::arch::timer::now_us().saturating_sub(t0) as f64 / 1000.0 / frames as f64;
+        let sum = buf.iter().fold(0u64, |a, &v| a.wrapping_mul(31).wrapping_add(v as u64));
+        if n == 1 {
+            base_ms = ms;
+            base_sum = sum;
+        }
+        out.push_str(&format!(
+            "  {n:>2} core{}  {ms:>7.2} ms/frame  {:>6.1} fps  x{:.2}  {:.1} Mtri/s  image {}\n",
+            if n == 1 { " " } else { "s" },
+            1000.0 / ms.max(0.001),
+            base_ms / ms.max(0.001),
+            ntri as f64 / ms.max(0.001) / 1000.0,
+            if sum == base_sum { "identical" } else { "DIFFERENT" }
+        ));
+    }
+    #[cfg(target_arch = "x86_64")]
+    crate::arch::smp::set_cores(before);
+    // the next frame of a real program must not see this target or depth
+    s.batch.clear();
+    s.batch_target = (0, 0, 0);
+    s.zclear = true;
+    out
+}
+
+/// The app window's drawing surface is about to change (a UI layer opens or closes,
+/// `lingapp::ui_begin` / `ui_end`): the 3-D drawn so far lands on the surface it was
+/// drawn for first. `post`: also run the frame's tone pass if it has not run yet
+/// (opening the HUD layer); closing one never tones the UI drawn in it.
+pub fn surface_switch(post: bool) {
+    let g = unsafe { &mut *(&raw mut G) };
+    if let Some(s) = g.as_mut() {
+        s.sync();
+        let tone = post && s.drew_3d && !s.post_done;
+        if !s.deferred.is_empty() || s.frame_open || tone {
+            let done = s.post_done;
+            if !post {
+                s.post_done = true;
+            }
+            s.flush();
+            if !post {
+                s.post_done = done;
+            }
+        }
+    }
+}
+
 /// Draw whatever is still queued when the program presents a frame without a
 /// `flush_3d` (the host would hold it until the next flush; here it would be lost).
 pub fn end_frame() {
     let g = unsafe { &mut *(&raw mut G) };
     if let Some(s) = g.as_mut() {
+        s.sync();
         if !s.deferred.is_empty() || s.frame_open || (s.drew_3d && !s.post_done) {
             s.flush();
         }
         s.adapt();
+        // the render scale / clip mode is the running program's: another program starts at the defaults
+        let app = crate::lingapp::active_app_name();
+        if app != s.app {
+            s.app = app;
+            s.scale = 1.0;
+            s.auto_scale = true;
+            s.clip_seen = false;
+            s.slow_frames = 0;
+            s.fast_frames = 0;
+        }
         s.post_done = false;
+        // the host clears depth at every present: a model that holds still
+        // must not fail the strict test against its own last frame
+        if s.drew_3d {
+            s.zclear = true;
+        }
         s.drew_3d = false;
     }
 }
@@ -2377,8 +3127,13 @@ fn tex_arg(s: &State, id: f64, soft: bool) -> Option<TexId> {
     }
 }
 
+include!("g3d_host.rs");
+
 /// The 3-D builtins; `None` when `name` is not one of them.
 pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
+    if let Some(v) = dispatch_host(st(), name, args) {
+        return Some(v);
+    }
     let shape_kind: Option<u8> = match name {
         b"cube" | b"box" => Some(0),
         b"sphere" => Some(1),
@@ -2386,13 +3141,14 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"cone" => Some(3),
         b"capsule" => Some(4),
         b"torus" => Some(5),
+        b"frustum" => Some(6),
         _ => None,
     };
     if let Some(kind) = shape_kind {
         let c = [f(args, 0, 0.0), f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 1.0), f(args, 4, 1.0), f(args, 5, 1.0), f(args, 6, 0.0), f(args, 7, 0.0), f(args, 8, 0.0)];
         let mode = n(args, 9, 0.0) as i32;
         let e0 = n(args, 10, 0.0) as i32;
-        let e1 = n(args, 11, 0.0) as i32;
+        let e1 = if kind == 6 { (f(args, 11, 0.5).clamp(0.0, 4.0) * 1000.0) as i32 } else { n(args, 11, 0.0) as i32 };
         st().shape(kind, c, mode, e0, e1);
         return Some(UNIT);
     }
@@ -2440,6 +3196,20 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             s.ambient = f(args, 0, 0.15);
             UNIT
         },
+        // light_pool(x, y, z, radius, r, g, b, strength): a soft additive glow disc lying flat on the
+        // ground (y-down world), for a campfire / lamp. Two triangles with the glow texture.
+        b"light_pool" => {
+            let (x, y, z) = (f(args, 0, 0.0), f(args, 1, 0.0), f(args, 2, 0.0));
+            let rad = f(args, 3, 1.0).max(0.01);
+            let col = (n(args, 4, 255.0).clamp(0.0, 255.0) as u32) << 16 | (n(args, 5, 255.0).clamp(0.0, 255.0) as u32) << 8 | n(args, 6, 255.0).clamp(0.0, 255.0) as u32;
+            let alpha = f(args, 7, 0.3).clamp(0.0, 1.0);
+            let t = col3(col);
+            let q = [[x - rad, y, z - rad], [x + rad, y, z - rad], [x + rad, y, z + rad], [x - rad, y, z + rad]];
+            let p = Params { tex: TexId::Glow, alpha, blend: 1, zwrite: false, ztest: s.depth_test, lit: false, amb: 0.0, fog: false, hole: [0.0; 4], sprite: false };
+            s.push_tri([q[0], q[1], q[2]], [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], [t; 3], p, 0, 0.0);
+            s.push_tri([q[0], q[2], q[3]], [[0.0, 0.0], [1.0, 1.0], [0.0, 1.0]], [t; 3], p, 0, 0.0);
+            UNIT
+        },
         b"clear_lights" => {
             s.lights.clear();
             UNIT
@@ -2461,6 +3231,11 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         b"set_depth_test" => {
             s.depth_test = n(args, 0, 1.0) as i64 != 0;
+            UNIT
+        },
+        // set_cull(mode): backface culling for draw_triangle_3d and mesh draws (see State::cull)
+        b"set_cull" => {
+            s.cull = n(args, 0, 1.0).clamp(0.0, 3.0) as u8;
             UNIT
         },
         b"set_fog" => {
@@ -2505,12 +3280,14 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         // 0.25..1 = fixed
         b"g3d_scale" => {
             let v = f(args, 0, 0.0);
+            s.app = crate::lingapp::active_app_name();
             if v <= 0.0 {
                 s.auto_scale = true;
                 s.scale = 1.0;
             } else {
                 s.auto_scale = false;
                 s.scale = v.clamp(0.25, 1.0);
+                log(&alloc::format!("g3d: {} renders 3-D at x{:.2} (fixed); UI and text stay native\n", s.app, s.scale));
             }
             UNIT
         },
@@ -2519,7 +3296,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         // post-processing the kernel does not do (yet): accepted, no effect
-        b"mesh_hue" | b"set_bloom" | b"set_fxaa" | b"set_ssao" | b"set_frame_blur" | b"screen_distort" | b"set_depth_blur" | b"set_antialias" | b"tm_ripple" | b"tm_ripple_use" | b"tm_ripple_clear" | b"tm_voice" | b"font_text_3d" | b"set_normal_override" | b"set_flat_shade" => UNIT,
+        b"set_bloom" | b"set_fxaa" | b"set_ssao" | b"set_frame_blur" | b"screen_distort" | b"set_depth_blur" | b"set_antialias" | b"tm_ripple" | b"tm_ripple_use" | b"tm_ripple_clear" | b"tm_voice" | b"font_text_3d" | b"set_normal_override" | b"set_flat_shade" => UNIT,
 
         // ── textures and meshes ──
         b"tm_tex_load" => {
@@ -2544,7 +3321,13 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
                     num((s.meshes.len() - 1) as f64)
                 },
                 None => {
-                    log(&alloc::format!("g3d: tm_load {path}: not an LTM1 mesh\n"));
+                    // once per file (games retry a missing mesh every half second): missing vs bad
+                    let seen = unsafe { &mut *(&raw mut GLTF_REPORTED) };
+                    if !seen.iter().any(|p| *p == path) {
+                        seen.push(path.clone());
+                        let why = if crate::vfs::exists(&path) { "not an LTM1 mesh (or unreadable)" } else { "no such file (not copied to the card?)" };
+                        log(&alloc::format!("g3d: tm_load {path}: {why}\n"));
+                    }
                     num(-1.0)
                 },
             }
@@ -2706,6 +3489,165 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
                 let p = Params { tex, alpha, blend, zwrite: false, ztest: s.depth_test, lit: false, amb: 0.0, fog: s.fog_end > 0.0, hole: [0.0; 4], sprite: false };
                 s.push_tri([q[0], q[1], q[2]], [t[0], t[1], t[2]], [tint; 3], p, 0, bias);
                 s.push_tri([q[0], q[2], q[3]], [t[0], t[2], t[3]], [tint; 3], p, 0, bias);
+            }
+            UNIT
+        },
+        // tm_field_tex(id, size, x0, z0, span, t, wells, contrast, gamma, bands, lights, alpha) -> id
+        //   The host's thermal map of a gravity field's cross section (runtime/game3d.rs), written
+        //   into texture `id` (a new one when id < 0): texel (i, j) is the world point
+        //   (x0 + span (i + .5) / size, z0 + span (j + .5) / size); the potential is a slow level
+        //   field plus every well in `wells` = [x, z, mass, radius, ...], mapped through a ROYGBIV
+        //   thermal ramp with bright equipotential contour lines every 1 / bands, and vivid pools
+        //   under `lights` = [x, z, radius, colour, ...] over a see-through base of `alpha`.
+        //   One core rebuilds this every frame, so the texel loop does no trig and no powf: the
+        //   contrast / gamma / ramp chain is a 257-entry LUT, and each mixed sinusoid is split by
+        //   sin(fx + gz) = sin fx cos gz + cos fx sin gz into per-column and per-row parts.
+        b"tm_field_tex" => {
+            let id = n(args, 0, -1.0);
+            let size = pow2((n(args, 1, 128.0) as u32).clamp(8, 512));
+            let (x0, z0, span, t) = (f(args, 2, 0.0), f(args, 3, 0.0), f(args, 4, 64.0), f(args, 5, 0.0));
+            let wells = flist(args, 6);
+            let (contrast, gamma, bands) = (f(args, 7, 1.35), f(args, 8, 0.85).max(0.05), f(args, 9, 9.0).max(1.0));
+            let lights = flist(args, 10);
+            let base_alpha = f(args, 11, 1.0).clamp(0.0, 1.0);
+            const RAMP: [[f32; 3]; 9] = [
+                [0.0, 0.0, 0.05],
+                [0.28, 0.0, 0.5],
+                [0.0, 0.2, 1.0],
+                [0.0, 0.9, 1.0],
+                [0.1, 1.0, 0.3],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.5, 0.0],
+                [1.0, 0.0, 0.12],
+                [1.0, 1.0, 1.0],
+            ];
+            let mut lut = [[0.0f32; 3]; 257];
+            for (i, e) in lut.iter_mut().enumerate() {
+                let d = libm::powf(i as f32 / 256.0, gamma);
+                let d = d * d * (3.0 - 2.0 * d);
+                let u = d * 7.999;
+                let (a, b, fr) = (RAMP[u as usize], RAMP[u as usize + 1], u - floor(u));
+                *e = [a[0] + (b[0] - a[0]) * fr, a[1] + (b[1] - a[1]) * fr, a[2] + (b[2] - a[2]) * fr];
+            }
+            let nn = size as usize;
+            let k = span / size as f32;
+            // per column: sin / cos of the x parts of the three mixed sinusoids, the x-only
+            // sinusoid, and x itself
+            let mut cols = vec![[0.0f32; 8]; nn];
+            for (i, c) in cols.iter_mut().enumerate() {
+                let x = x0 + (i as f32 + 0.5) * k;
+                *c = [sin(x * 0.018), cos(x * 0.018), sin(x * 0.006), cos(x * 0.006), sin(x * 0.043), cos(x * 0.043), sin(x * 0.11 - t * 0.3), x];
+            }
+            let mut px = vec![0u32; nn * nn];
+            for j in 0..nn {
+                let z = z0 + (j as f32 + 0.5) * k;
+                let (sg1, cg1) = (sin(z * 0.021 + t * 0.07), cos(z * 0.021 + t * 0.07));
+                let (sg2, cg2) = (sin(z * 0.017 + t * 0.05), cos(z * 0.017 + t * 0.05));
+                let (sg3, cg3) = (sin(z * 0.043 + t * 0.11), cos(z * 0.043 + t * 0.11));
+                let e5 = sin(z * 0.09 + t * 0.23);
+                for (cl, out) in cols.iter().zip(px[j * nn..j * nn + nn].iter_mut()) {
+                    let x = cl[7];
+                    // 0.22 sin(.018x + .021z + .07t) cos(.017z - .006x + .05t)
+                    // + 0.1 sin(.043(x + z) + .11t) + 0.05 sin(.11x - .3t) sin(.09z + .23t)
+                    let s1 = cl[0] * cg1 + cl[1] * sg1;
+                    let c2 = cl[3] * cg2 + cl[2] * sg2;
+                    let s3 = cl[4] * cg3 + cl[5] * sg3;
+                    let mut phi = 0.5 + 0.22 * s1 * c2 + 0.1 * s3 + 0.05 * cl[6] * e5;
+                    for w in wells.chunks_exact(4) {
+                        let (dx, dz, r2) = (x - w[0], z - w[1], (w[3] * w[3]).max(0.01));
+                        phi += w[2] * r2 / (dx * dx + dz * dz + r2);
+                    }
+                    let v = ((phi - 0.5) * contrast + 0.5).clamp(0.0, 1.0) * 256.0;
+                    let vi = (v as usize).min(255);
+                    let vf = v - vi as f32;
+                    let (lo, hi) = (lut[vi], lut[vi + 1]);
+                    let mut c = [lo[0] + (hi[0] - lo[0]) * vf, lo[1] + (hi[1] - lo[1]) * vf, lo[2] + (hi[2] - lo[2]) * vf];
+                    // the cross-section slices: thin bright lines on the equipotentials
+                    let q = phi * bands;
+                    let q = q - floor(q);
+                    let line = (1.0 - (if q < 1.0 - q { q } else { 1.0 - q }) / 0.09).clamp(0.0, 1.0);
+                    let line = line * line;
+                    for ch in c.iter_mut() {
+                        *ch = (*ch * 0.78 * (1.0 - 0.5 * line) + 0.95 * line).clamp(0.0, 1.0);
+                    }
+                    let mut al = base_alpha + (1.0 - base_alpha) * line * 0.45;
+                    for l in lights.chunks_exact(4) {
+                        let (dx, dz, r) = (x - l[0], z - l[1], l[2].max(0.1));
+                        let d2 = (dx * dx + dz * dz) / (r * r);
+                        if d2 < 1.0 {
+                            let g = (1.0 - d2) * (1.0 - d2);
+                            let lc = l[3] as u32;
+                            let lr = [((lc >> 16) & 255) as f32 / 255.0, ((lc >> 8) & 255) as f32 / 255.0, (lc & 255) as f32 / 255.0];
+                            for (ch, v) in c.iter_mut().zip(lr) {
+                                *ch = (*ch * (1.0 - 0.75 * g) + v * 1.3 * g).clamp(0.0, 1.0);
+                            }
+                            al += g;
+                        }
+                    }
+                    let al = al.clamp(0.0, 1.0);
+                    *out = ((al * 255.0) as u32) << 24 | ((c[0] * 255.0) as u32) << 16 | ((c[1] * 255.0) as u32) << 8 | (c[2] * 255.0) as u32;
+                }
+            }
+            let tex = Tex::new(size, px);
+            if id >= 0.0 && (id as usize) < s.texs.len() {
+                s.texs[id as usize] = tex;
+                num(id)
+            } else {
+                s.texs.push(tex);
+                num((s.texs.len() - 1) as f64)
+            }
+        },
+        // tm_wave_grid(tex, x0, z0, span, n, t, waves, ybase, sign, tint, alpha, blend, u0, v0, ru, rv)
+        //   The host's sea surface (runtime/game3d.rs): an n x n textured grid over
+        //   [x0, x0 + span] x [z0, z0 + span] whose vertices ride
+        //   y = ybase + sign * sum(a sin(kx x + kz z + w t + p)) for waves = [kx, kz, w, a, p, ...];
+        //   unlit, fogged, no z-write (ordered with the other translucent triangles at flush), and
+        //   the texture runs from (u0, v0) over (ru, rv) across the grid and wraps.
+        b"tm_wave_grid" => {
+            let id = n(args, 0, -1.0);
+            let tex = if id < 0.0 {
+                Some(TexId::Glow)
+            } else if (id as usize) < s.texs.len() {
+                Some(TexId::Id(id as u32))
+            } else {
+                None
+            };
+            let Some(tex) = tex else { return Some(UNIT) };
+            let (x0, z0, span) = (f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 64.0));
+            let gn = (n(args, 4, 32.0) as usize).clamp(1, 128);
+            let t = f(args, 5, 0.0);
+            let waves = flist(args, 6);
+            let (ybase, sign) = (f(args, 7, 0.0), f(args, 8, -1.0));
+            let tint = col3(rgb(n(args, 9, 16777215.0)));
+            let alpha = f(args, 10, 1.0);
+            let blend = n(args, 11, 0.0) as u8;
+            let (u0, v0, ru, rv) = (f(args, 12, 0.0), f(args, 13, 0.0), f(args, 14, 1.0), f(args, 15, 1.0));
+            let h = |x: f32, z: f32| -> f32 {
+                let mut sum = 0.0;
+                for w in waves.chunks_exact(5) {
+                    sum += w[3] * sin(w[0] * x + w[1] * z + w[2] * t + w[4]);
+                }
+                ybase + sign * sum
+            };
+            let m = gn + 1;
+            let cell = span / gn as f32;
+            let mut grid = vec![[0.0f32; 3]; m * m];
+            let mut uvs = vec![[0.0f32; 2]; m * m];
+            for j in 0..m {
+                for i in 0..m {
+                    let (x, z) = (x0 + i as f32 * cell, z0 + j as f32 * cell);
+                    grid[j * m + i] = [x, h(x, z), z];
+                    uvs[j * m + i] = [u0 + ru * i as f32 / gn as f32, v0 + rv * j as f32 / gn as f32];
+                }
+            }
+            let p = Params { tex, alpha, blend, zwrite: false, ztest: s.depth_test, lit: false, amb: 0.0, fog: s.fog_end > 0.0, hole: [0.0; 4], sprite: false };
+            for j in 0..gn {
+                for i in 0..gn {
+                    let a = j * m + i;
+                    let (b, c, d) = (a + 1, a + m + 1, a + m);
+                    s.push_tri([grid[a], grid[b], grid[c]], [uvs[a], uvs[b], uvs[c]], [tint; 3], p, 0, 0.0);
+                    s.push_tri([grid[a], grid[c], grid[d]], [uvs[a], uvs[c], uvs[d]], [tint; 3], p, 0, 0.0);
+                }
             }
             UNIT
         },

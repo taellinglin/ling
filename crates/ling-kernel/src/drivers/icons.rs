@@ -37,6 +37,8 @@ pub const SPEAKER_MUTE: u8 = 22;
 pub const WIFI: u8 = 23;
 pub const WIFI_OFF: u8 = 24;
 pub const SHIELD: u8 = 25;
+/// LingDiffusion: a picture with a sparkle (an image made from a prompt).
+pub const DIFFUSION: u8 = 40;
 
 // ── Shapes (in icon units, 0..16) ────────────────────────────────────────────
 
@@ -243,6 +245,20 @@ fn sample(id: u8, x: f32, y: f32, fg: u32, hole: u32) -> Option<u32> {
         },
         SHIELD => {
             put(tri(x, y, (2.5, 3.0), (13.5, 3.0), (8.0, 15.0)) || rrect(x, y, 2.5, 1.5, 13.5, 8.0, 1.5), fg);
+        },
+        DIFFUSION => {
+            // a framed picture (hills under a sky) with a four-point sparkle over its top-right corner
+            put(rrect(x, y, 1.5, 4.0, 12.0, 14.5, 1.5), fg);
+            put(rect(x, y, 3.0, 5.5, 10.5, 13.0), hole);
+            put(tri(x, y, (3.0, 13.0), (6.5, 8.5), (10.0, 13.0)), fg);
+            put(tri(x, y, (6.5, 13.0), (9.0, 10.0), (10.5, 12.0)) || rect(x, y, 9.0, 12.0, 10.5, 13.0), fg);
+            let star = tri(x, y, (12.5, 0.6), (11.4, 4.0), (13.6, 4.0))
+                || tri(x, y, (12.5, 7.4), (11.4, 4.0), (13.6, 4.0))
+                || tri(x, y, (9.1, 4.0), (12.5, 2.9), (12.5, 5.1))
+                || tri(x, y, (15.9, 4.0), (12.5, 2.9), (12.5, 5.1));
+            put(circle(x, y, 12.5, 4.0, 2.6), hole);
+            put(star, fg);
+            put(circle(x, y, 5.0, 7.3, 0.9), fg);
         },
         _ => put(rrect(x, y, 3.0, 3.0, 13.0, 13.0, 2.0), fg),
     }

@@ -204,3 +204,85 @@ pub fn face_normal(
     let vz = cz - az;
     [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]
 }
+
+/// Is this triangle soup a closed, consistently wound surface — and which way
+/// round? `+1` closed with positive signed volume (outward-facing by the
+/// right-hand rule), `-1` closed and inside-out, `0` open / inconsistent (a
+/// card, a cloth or hair sheet, a house without a floor) — such meshes must
+/// stay double-sided. Vertices are welded by position (meshes split vertices at
+/// UV seams); up to 1% unmatched edges are tolerated for tiny cracks. Used by
+/// `set_cull(3)` (auto backface culling).
+pub fn closed_mesh_orientation<I: IntoIterator<Item = [[f32; 3]; 3]>>(tris: I) -> i8 {
+    use std::collections::HashMap;
+    let tris: Vec<[[f32; 3]; 3]> = tris.into_iter().collect();
+    if tris.len() < 4 {
+        return 0;
+    }
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for t in &tris {
+        for p in t {
+            for k in 0..3 {
+                if !p[k].is_finite() {
+                    return 0;
+                }
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+    }
+    let diag = ((hi[0] - lo[0]).powi(2) + (hi[1] - lo[1]).powi(2) + (hi[2] - lo[2]).powi(2)).sqrt();
+    if diag <= 0.0 {
+        return 0;
+    }
+    let eps = diag * 1e-5;
+    let mut ids: HashMap<(i64, i64, i64), u32> = HashMap::new();
+    let mut id = |p: [f32; 3]| -> u32 {
+        let key = ((p[0] / eps).round() as i64, (p[1] / eps).round() as i64, (p[2] / eps).round() as i64);
+        let n = ids.len() as u32;
+        *ids.entry(key).or_insert(n)
+    };
+    let mut edges: HashMap<(u32, u32), i32> = HashMap::new();
+    let mut vol = 0.0f64;
+    for t in &tris {
+        let (a, b, c) = (id(t[0]), id(t[1]), id(t[2]));
+        if a == b || b == c || c == a {
+            continue; // degenerate
+        }
+        for e in [(a, b), (b, c), (c, a)] {
+            *edges.entry(e).or_insert(0) += 1;
+        }
+        let (p, q, r) = (t[0], t[1], t[2]);
+        let (p0, p1, p2) = (p[0] as f64, p[1] as f64, p[2] as f64);
+        let (q0, q1, q2) = (q[0] as f64, q[1] as f64, q[2] as f64);
+        let (r0, r1, r2) = (r[0] as f64, r[1] as f64, r[2] as f64);
+        vol += p0 * (q1 * r2 - q2 * r1) - p1 * (q0 * r2 - q2 * r0) + p2 * (q0 * r1 - q1 * r0);
+    }
+    if edges.is_empty() {
+        return 0;
+    }
+    let bad = edges.iter().filter(|(&(a, b), &n)| n != 1 || edges.get(&(b, a)).copied() != Some(1)).count();
+    if bad * 100 > edges.len() {
+        return 0;
+    }
+    if vol.abs() < (diag as f64).powi(3) * 1e-9 {
+        return 0;
+    }
+    if vol > 0.0 { 1 } else { -1 }
+}
+
+/// The `cull` mode (1 = drop clockwise-on-screen, 2 = counter-clockwise) that
+/// removes the back faces of a closed mesh with orientation `orient` (see
+/// [`closed_mesh_orientation`]) drawn with a scale of sign `mirror` (< 0
+/// flips the winding). 0 = don't cull.
+pub fn auto_cull_mode(orient: i8, mirror: f32) -> u8 {
+    let o = if mirror < 0.0 { -orient } else { orient };
+    match o {
+        1 => AUTO_CULL_POSITIVE,
+        -1 => 3 - AUTO_CULL_POSITIVE,
+        _ => 0,
+    }
+}
+
+/// Screen-winding cull mode that hides the back faces of a positive-volume
+/// (outward, right-hand-rule) mesh. Pinned by `gfx::cull_tests`.
+pub const AUTO_CULL_POSITIVE: u8 = 1;

@@ -6,11 +6,12 @@
 //! 1 hosting with no client left; `net_recv_from` gives "id|msg";
 //! `net_discover` gives "ip|info" lines seen in the last 5 s.
 //!
-//! Honest limits: `http_post_async` runs the request synchronously (there is
-//! no background runtime in-kernel) and `http_job_poll` then returns its
-//! result. The Pi has no network driver yet, so there everything reports
-//! "not connected" (status 0, empty strings) until it does. (The Pi 5's wired
-//! port is `arch::rp1_eth`.)
+//! `http_post_async` / `http_get_async` run the request on a green thread
+//! (coro.rs): the id returns at once, the app polls `http_job_poll`, and the
+//! coroutine-aware network waits (`timer::poll_until` + the net lock) hand the
+//! CPU back to the UI between segments. If no stack can be spawned they fall
+//! back to the old synchronous call. (The Pi 5's wired port is
+//! `arch::rp1_eth`; with no driver everything reports "not connected".)
 
 use crate::lingrt::{mk_str, num, to_f64, to_string, UNIT};
 use alloc::string::String;
@@ -110,15 +111,22 @@ mod imp {
 
     pub fn join(ip: &str, port: u16) {
         close();
-        let Some(addr) = parse_ip(ip).or_else(|| ns::dns_resolve(ip)) else { return };
+        let Some(addr) = parse_ip(ip).or_else(|| ns::dns_resolve(ip)) else {
+            crate::console_write(format!("net_join {ip}:{port}: no such host\n").as_bytes());
+            return;
+        };
         match ns::tcp_connect_h(addr, port, 3_000_000) {
             Some(h) => {
                 let n = net();
                 n.role = Role::Client;
                 n.peers.push(Peer { handle: h, id: 0, inbuf: Vec::new() });
                 n.status = 2;
+                crate::console_write(format!("net_join {ip}:{port} ({}): connected\n", ip_str(addr)).as_bytes());
             },
-            None => net().status = 0,
+            None => {
+                net().status = 0;
+                crate::console_write(format!("net_join {ip}:{port} ({}): no answer\n", ip_str(addr)).as_bytes());
+            },
         }
     }
 
@@ -149,6 +157,7 @@ mod imp {
                     let line: Vec<u8> = n.peers[i].inbuf.drain(..=pos).collect();
                     let text = String::from_utf8_lossy(&line[..line.len() - 1]).trim_end_matches('\r').to_string();
                     let id = n.peers[i].id;
+                    netlog(&format!("net_recv line ({} chars)", text.len()));
                     n.inbound.push_back((id, text));
                 }
             } else if !ns::tcp_established_h(n.peers[i].handle) {
@@ -197,7 +206,20 @@ mod imp {
         let mut line = s.as_bytes().to_vec();
         line.push(b'\n');
         for p in &net().peers {
-            ns::tcp_write_h(p.handle, &line);
+            let ok = ns::tcp_write_h(p.handle, &line);
+            netlog(&format!("net_send {} bytes -> {}", line.len(), if ok { "sent" } else { "FAILED" }));
+        }
+    }
+
+    /// The first few net_* events on the serial log (diagnosing a game's login).
+    fn netlog(msg: &str) {
+        static mut N: u32 = 0;
+        unsafe {
+            if N < 24 {
+                N += 1;
+                crate::console_write(msg.as_bytes());
+                crate::console_write(b"\n");
+            }
         }
     }
 
@@ -306,10 +328,10 @@ mod imp {
 
     /// Plain HTTP/1.0 request over a socket handle; the whole response lands
     /// in `out`.
-    fn plain_request(host: &str, port: u16, method: &str, path: &str, content_type: &str, body: &[u8], out: &mut [u8]) -> usize {
+    fn plain_request(host: &str, port: u16, method: &str, path: &str, content_type: &str, extra: &str, body: &[u8], out: &mut [u8]) -> usize {
         let Some(ip) = parse_ip(host).or_else(|| ns::dns_resolve(host)) else { return 0 };
         let Some(h) = ns::tcp_connect_h(ip, port, 5_000_000) else { return 0 };
-        let mut req = format!("{method} {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: LingOS\r\nConnection: close\r\n").into_bytes();
+        let mut req = format!("{method} {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: LingOS\r\nConnection: close\r\n{extra}").into_bytes();
         if !body.is_empty() {
             req.extend_from_slice(format!("Content-Type: {content_type}\r\nContent-Length: {}\r\n", body.len()).as_bytes());
         }
@@ -332,7 +354,15 @@ mod imp {
     /// `(status, body)` of an HTTP(S) request; status 0 = no response at all.
     pub fn request(method: &str, url: &str, content_type: &str, body: &str) -> (u16, String) {
         let Some((host, port, path, https)) = ns::parse_url(url) else { return (0, String::new()) };
+        // One whole transaction under the net lock: `RESP`, `last_status` and
+        // `last_headers` are shared, so two cooperative tasks (a green-thread
+        // fetch and main's) must not interleave requests. Re-entrant, so the
+        // inner connect/read/TLS acquisitions still work; this is also what
+        // lets poll_until's coroutine yield cover the full fetch.
+        let _g = ns::NetGuard::new();
         let _ = ns::arp_gateway(); // warm the gateway's MAC so the first SYN is not lost
+        // the first-party cookies for this request (cookies.rs); nothing for another site
+        let extra = crate::cookies::header_for(host, path, https).map(|c| format!("Cookie: {c}\r\n")).unwrap_or_default();
         let resp = unsafe { &mut *(&raw mut RESP) };
         let n = if https {
             // TLS progress goes to the serial log (a failed fetch says why there).
@@ -341,7 +371,7 @@ mod imp {
             let mut log = |m: &[u8]| crate::console_write(m);
             let mut got = 0;
             for attempt in 0..2 {
-                match crate::tls::https_request(host, port, method, path, content_type, body.as_bytes(), resp, TLS_CHUNK, &mut log) {
+                match crate::tls::https_request(host, port, method, path, content_type, &extra, body.as_bytes(), resp, TLS_CHUNK, &mut log) {
                     Ok(n) => {
                         got = n;
                         break;
@@ -355,7 +385,7 @@ mod imp {
             }
             got
         } else {
-            plain_request(host, port, method, path, content_type, body.as_bytes(), resp)
+            plain_request(host, port, method, path, content_type, &extra, body.as_bytes(), resp)
         };
         if n == 0 {
             net().last_status = 0;
@@ -366,6 +396,7 @@ mod imp {
         net().last_status = status;
         let off = crate::tls::http_body_offset(&resp[..n]);
         net().last_headers = String::from_utf8_lossy(&resp[..off.min(n)]).into_owned();
+        crate::cookies::store_from_response(host, path, https, &net().last_headers);
         let start = if off > 0 && off <= n { off } else { 0 };
         (status, String::from_utf8_lossy(&resp[start..n]).into_owned())
     }
@@ -387,13 +418,67 @@ mod imp {
         String::new()
     }
 
+    /// A finished job's text for `job_poll`. An empty body (a bare redirect, a
+    /// 204) must not come back as "" -- that is what `job_poll` returns while
+    /// the job is still running, so the app would wait for it forever.
+    fn job_result(status: u16, out: String, url: &str) -> String {
+        if status == 0 {
+            format!("ERROR: no response from {url}")
+        } else if out.is_empty() {
+            String::from(" ")
+        } else {
+            out
+        }
+    }
+
+    /// Start a POST on a green thread and return a job id at once; the app
+    /// polls `job_poll` (each `present()` gives the thread a turn, and the
+    /// coroutine-aware network waits hand the CPU back between segments).
+    /// Falls back to the old synchronous call if no stack can be spawned.
     pub fn post_async(url: &str, body: &str, content_type: &str) -> String {
         let n = net();
         let id = format!("job{}", n.next_job);
         n.next_job += 1;
-        let (status, out) = request("POST", url, content_type, body);
-        let result = if status == 0 { format!("ERROR: no response from {url}") } else { out };
-        net().jobs.push((id.clone(), result));
+        let (u, b, ct, jid) = (String::from(url), String::from(body), String::from(content_type), id.clone());
+        let spawned = crate::coro::spawn(
+            "http_post",
+            false,
+            alloc::boxed::Box::new(move || {
+                let (status, out) = request("POST", &u, &ct, &b);
+                let result = job_result(status, out, &u);
+                net().jobs.push((jid, result));
+            }),
+        );
+        if spawned == 0 {
+            let (status, out) = request("POST", url, content_type, body);
+            let result = job_result(status, out, url);
+            net().jobs.push((id.clone(), result));
+        }
+        id
+    }
+
+    /// `post_async` for GET: a page fetch that doesn't freeze the UI. Horizon
+    /// polls `job_poll` and keeps drawing its spinner while the TLS handshake
+    /// and body stream run on the green thread.
+    pub fn get_async(url: &str) -> String {
+        let n = net();
+        let id = format!("job{}", n.next_job);
+        n.next_job += 1;
+        let (u, jid) = (String::from(url), id.clone());
+        let spawned = crate::coro::spawn(
+            "http_get",
+            false,
+            alloc::boxed::Box::new(move || {
+                let (status, out) = request("GET", &u, "", "");
+                let result = job_result(status, out, &u);
+                net().jobs.push((jid, result));
+            }),
+        );
+        if spawned == 0 {
+            let (status, out) = request("GET", url, "", "");
+            let result = job_result(status, out, url);
+            net().jobs.push((id.clone(), result));
+        }
         id
     }
 
@@ -503,6 +588,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             let ct = if args.len() > 2 { s(2) } else { String::from("application/json") };
             mk_str(&imp::post_async(&s(0), &s(1), &ct))
         },
+        b"http_get_async" => mk_str(&imp::get_async(&s(0))),
         b"http_job_poll" => mk_str(&imp::job_poll(&s(0))),
         b"url_decode" => mk_str(&url_decode(&s(0))),
         _ => return None,

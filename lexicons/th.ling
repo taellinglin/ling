@@ -252,6 +252,10 @@ set_color_space = "ปริภูมิสี"
 set_gradient_space = "ปริภูมิไล่สี"
 mix_color = "ผสมสี"
 set_depth_test = "ทดสอบความลึก"
+layer_save = "บันทึกเลเยอร์"
+layer_restore = "คืนเลเยอร์"
+layer_free = "ลบเลเยอร์"
+set_cull = "ตัดด้านหลัง"
 
 # ── Collections ────────────────────────────────────────────────────────────────
 len = "ความยาว"

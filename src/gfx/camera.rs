@@ -85,6 +85,11 @@ impl Camera3D {
             return (wx, wy, wz);
         }
         let tan_h = (self.cx / self.focal.max(1.0)).max(0.05);
+        // outside the 1.8x view cone the blend factor is exactly 0: bail before the sqrt/tanh
+        let lim = 1.8 * eye.max(0.1) * tan_h;
+        if qx * qx + qy * qy >= lim * lim {
+            return (wx, wy, wz);
+        }
         let q = (qx * qx + qy * qy).sqrt() / (eye.max(0.1) * tan_h);
         let k = k_front * ((1.8 - q) / 0.6).clamp(0.0, 1.0);
         if k <= 0.0 {
@@ -114,6 +119,12 @@ impl Camera3D {
     #[inline]
     pub fn depth(&self, wx: f32, wy: f32, wz: f32) -> f32 {
         let (wx, wy, wz) = self.hyper(wx, wy, wz);
+        self.depth_unwarped(wx, wy, wz)
+    }
+
+    /// [`Self::depth`] of a point that is already warped (see [`Self::hyper`]).
+    #[inline]
+    pub fn depth_unwarped(&self, wx: f32, wy: f32, wz: f32) -> f32 {
         let wx = wx - self.tx;
         let wy = wy - self.ty;
         let wz = wz - self.tz;
@@ -126,6 +137,13 @@ impl Camera3D {
     #[inline]
     pub fn project(&self, wx: f32, wy: f32, wz: f32) -> (f32, f32, f32) {
         let (wx, wy, wz) = self.hyper(wx, wy, wz);
+        self.project_unwarped(wx, wy, wz)
+    }
+
+    /// [`Self::project`] of a point that is already warped (see [`Self::hyper`]):
+    /// lets a caller that needs both depth and screen position warp once.
+    #[inline]
+    pub fn project_unwarped(&self, wx: f32, wy: f32, wz: f32) -> (f32, f32, f32) {
         let wx = wx - self.tx;
         let wy = wy - self.ty;
         let wz = wz - self.tz;
@@ -142,5 +160,71 @@ impl Camera3D {
         let sx = self.cx + self.focal * rx / d;
         let sy = self.cy + self.focal * ry / d;
         (sx, sy, rz)
+    }
+}
+
+#[cfg(feature = "game")]
+impl Camera3D {
+    /// This camera as `ling_gpu` batch-projection parameters.
+    pub fn gpu_params(&self) -> (ling_gpu::CameraParams, ling_gpu::ViewWarp) {
+        (
+            ling_gpu::CameraParams {
+                cry: self.cry,
+                sry: self.sry,
+                crx: self.crx,
+                srx: self.srx,
+                cx: self.cx,
+                cy: self.cy,
+                focal: self.focal,
+                zdist: self.zdist,
+                tx: self.tx,
+                ty: self.ty,
+                tz: self.tz,
+            },
+            ling_gpu::ViewWarp {
+                crz: self.crz,
+                srz: self.srz,
+                hyp_r: self.hyp_r,
+                hyp_s: self.hyp_s,
+                hx: self.hx,
+                hy: self.hy,
+                hz: self.hz,
+            },
+        )
+    }
+
+    /// Project a whole interleaved-xyz vertex buffer into (sx, sy, depth)
+    /// triples — exactly what [`Self::project`] gives per point, but on the
+    /// best `ling_gpu` backend (CUDA for big buffers, every CPU core otherwise),
+    /// including the hyperbolic warp and roll.
+    pub fn project_batch(&self, world: &[f32], out: &mut [f32]) {
+        let (cp, warp) = self.gpu_params();
+        if warp.is_identity() {
+            ling_gpu::backend().project_points(world, &cp, out);
+        } else {
+            ling_gpu::backend().project_points_warped(world, &cp, &warp, out);
+        }
+    }
+}
+
+#[cfg(all(test, feature = "game"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpu_twin_matches_camera_project() {
+        let mut c = Camera3D::default();
+        let (a, b, r) = (0.7f32, 0.25f32, 0.15f32);
+        (c.cry, c.sry, c.crx, c.srx, c.crz, c.srz) = (a.cos(), a.sin(), b.cos(), b.sin(), r.cos(), r.sin());
+        (c.tx, c.ty, c.tz) = (2.0, -1.0, -8.0);
+        (c.hyp_r, c.hyp_s, c.hx, c.hy, c.hz) = (9.0, 0.5, 1.0, 0.0, 3.0);
+        let (cp, w) = c.gpu_params();
+        for i in 0..20_000 {
+            let f = i as f32;
+            let p = ((f * 0.731).sin() * 20.0, (f * 0.377).cos() * 6.0, (f * 0.913).sin() * 20.0);
+            let a = c.project(p.0, p.1, p.2);
+            let b = ling_gpu::project_warped(&cp, &w, p.0, p.1, p.2);
+            assert_eq!(a, b, "point {p:?}");
+        }
     }
 }

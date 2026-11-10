@@ -347,6 +347,7 @@ fn block_io(c: &Card, lba: u32, buf: &mut [u8; SECTOR_SIZE], write: bool) -> Res
 }
 
 pub fn read_sector(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
+    crate::kstats::disk_rd(SECTOR_SIZE);
     let c = card().ok_or(())?;
     if lba >= c.sectors && c.sectors != 0 {
         return Err(());
@@ -354,7 +355,85 @@ pub fn read_sector(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
     block_io(c, lba, buf, false).or_else(|_| block_io(c, lba, buf, false))
 }
 
+/// Most sectors one CMD18 moves (a 64 KiB burst).
+const MULTI_MAX: usize = 128;
+
+/// `n` consecutive sectors in one multi-block read (CMD18 + auto CMD12) by PIO:
+/// one command round trip per burst instead of one per sector.
+fn multi_io(c: &Card, lba: u32, dst: &mut [u8]) -> Result<(), ()> {
+    let base = c.base;
+    let n = dst.len() / SECTOR_SIZE;
+    let arg = if c.high_capacity { lba } else { lba.wrapping_mul(512) };
+    wr(base, BLOCK, ((n as u32) << 16) | SECTOR_SIZE as u32);
+    // transfer mode: block-count enable | auto CMD12 | read | multi-block
+    let mode = XFER_READ | (1 << 5) | (1 << 2) | (1 << 1);
+    cmd(base, 18, arg, RESP_48_CHK | DATA, mode, true).ok_or(())?;
+    let start = crate::arch::timer::now_us();
+    let mut got = 0usize;
+    while got < n {
+        let st = rd(base, INT_STATUS);
+        if st & INT_ERROR != 0 {
+            wr(base, INT_STATUS, st);
+            hex(b"  sd: multi-block error, int status=", st as u64, 8);
+            reset_lines(base, 0x6);
+            return Err(());
+        }
+        if st & INT_READ_READY != 0 {
+            wr(base, INT_STATUS, INT_READ_READY);
+            let blk = &mut dst[got * SECTOR_SIZE..(got + 1) * SECTOR_SIZE];
+            for i in 0..SECTOR_SIZE / 4 {
+                blk[i * 4..i * 4 + 4].copy_from_slice(&rd(base, BUF_DATA).to_le_bytes());
+            }
+            got += 1;
+        } else if crate::arch::timer::now_us().saturating_sub(start) > 1_000_000 {
+            out(b"  sd: multi-block transfer timeout\n");
+            reset_lines(base, 0x6);
+            return Err(());
+        }
+    }
+    // the last block is in; wait for the auto CMD12 to finish the transfer
+    if !wait(base, INT_STATUS, INT_XFER_DONE, INT_XFER_DONE, 200) {
+        reset_lines(base, 0x6);
+        return Err(());
+    }
+    wr(base, INT_STATUS, INT_XFER_DONE);
+    Ok(())
+}
+
+/// Fill `buf` from consecutive sectors starting at `lba`. Whole sectors go in
+/// multi-block bursts; if a burst fails it is retried a sector at a time.
+pub fn read_sectors(lba: u32, buf: &mut [u8]) -> Result<(), ()> {
+    let c = card().ok_or(())?;
+    let whole = buf.len() / SECTOR_SIZE * SECTOR_SIZE;
+    let mut done = 0usize;
+    while done < whole {
+        let n = ((whole - done) / SECTOR_SIZE).min(MULTI_MAX);
+        let at = lba + (done / SECTOR_SIZE) as u32;
+        if c.sectors != 0 && at as usize + n > c.sectors as usize {
+            return Err(());
+        }
+        crate::kstats::disk_rd(n * SECTOR_SIZE);
+        let chunk = &mut buf[done..done + n * SECTOR_SIZE];
+        if n == 1 || multi_io(c, at, chunk).is_err() {
+            for (i, blk) in chunk.chunks_mut(SECTOR_SIZE).enumerate() {
+                let mut s = [0u8; SECTOR_SIZE];
+                read_sector(at + i as u32, &mut s)?;
+                blk.copy_from_slice(&s);
+            }
+        }
+        done += n * SECTOR_SIZE;
+    }
+    if whole < buf.len() {
+        let mut s = [0u8; SECTOR_SIZE];
+        read_sector(lba + (whole / SECTOR_SIZE) as u32, &mut s)?;
+        let rest = buf.len() - whole;
+        buf[whole..].copy_from_slice(&s[..rest]);
+    }
+    Ok(())
+}
+
 pub fn write_sector(lba: u32, data: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
+    crate::kstats::disk_wr(SECTOR_SIZE);
     let c = card().ok_or(())?;
     if lba >= c.sectors && c.sectors != 0 {
         return Err(());

@@ -173,6 +173,17 @@ fn apply_packet(p: [u8; 3]) {
     }
 }
 
+/// A USB mouse report (`arch::xhci`): relative motion with +Y already
+/// pointing down the screen, and the button bits in the same order.
+pub(crate) fn usb_report(dx: i32, dy: i32, buttons: u8) {
+    crate::drivers::keyboard::note_activity();
+    unsafe {
+        MOUSE_X = (MOUSE_X + dx).clamp(0, BOUND_W - 1);
+        MOUSE_Y = (MOUSE_Y + dy).clamp(0, BOUND_H - 1);
+        BUTTONS = buttons & 0x07;
+    }
+}
+
 pub fn x() -> i32 {
     unsafe { MOUSE_X }
 }

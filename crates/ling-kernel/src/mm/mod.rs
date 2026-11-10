@@ -8,6 +8,7 @@
 //! per-process address spaces instead of being done twice.
 pub mod frame;
 pub mod heap;
+pub mod highmem;
 
 /// A uniprocessor critical section: disables interrupts on construction and
 /// restores the *prior* interrupt state on drop. LingOS is single-core, so
@@ -81,7 +82,7 @@ pub fn init_physical_memory() {
                 }
                 count += 1;
             }
-            frame::add_free_region(base, size, kernel_end);
+            add_free_region_unreserved(base, size, kernel_end);
         }
         if count == 0 {
             match crate::arch::mailbox::arm_memory() {
@@ -90,7 +91,7 @@ pub fn init_physical_memory() {
                         RAM_REGIONS[0] = (base, size);
                     }
                     count = 1;
-                    frame::add_free_region(base, size, kernel_end);
+                    add_free_region_unreserved(base, size, kernel_end);
                     // No device tree (config.txt's `device_tree=` leaves x0
                     // empty): the mailbox only knows the first bank, below
                     // the VideoCore split. The board revision code says how
@@ -104,7 +105,7 @@ pub fn init_physical_memory() {
                             RAM_REGIONS[count] = (b, s);
                         }
                         count += 1;
-                        frame::add_free_region(b, s, kernel_end);
+                        add_free_region_unreserved(b, s, kernel_end);
                     }
                 },
                 None => {
@@ -122,6 +123,78 @@ pub fn init_physical_memory() {
         }
         unsafe {
             RAM_COUNT = count;
+        }
+    }
+}
+
+/// What in RAM the frame allocator must leave alone on the Pi: the device
+/// tree's reserved ranges and the firmware's framebuffer. Printed at boot,
+/// so a photo of the console shows them.
+#[cfg(target_arch = "aarch64")]
+fn reserved_ranges() -> ([(u64, u64); 17], usize) {
+    let mut out = [(0u64, 0u64); 17];
+    let (res, mut n) = crate::arch::fdt::reserved_regions();
+    out[..n].copy_from_slice(&res[..n]);
+    let fb = unsafe { crate::arch::mailbox::FB_REGION };
+    if fb.1 > 0 {
+        out[n] = fb;
+        n += 1;
+    }
+    let hex = |v: u64| {
+        let mut buf = [0u8; 10];
+        for (i, d) in buf.iter_mut().enumerate() {
+            *d = b"0123456789abcdef"[((v >> (36 - 4 * i)) & 0xF) as usize];
+        }
+        crate::console_write(&buf);
+    };
+    for &(b, s) in out.iter().take(n) {
+        crate::console_write(b"mm: reserved 0x");
+        hex(b);
+        crate::console_write(b" + 0x");
+        hex(s);
+        crate::console_write(b"\n");
+    }
+    (out, n)
+}
+
+/// `frame::add_free_region` for the parts of `[base, base + size)` outside
+/// every reserved range.
+#[cfg(target_arch = "aarch64")]
+fn add_free_region_unreserved(base: u64, size: u64, kernel_end: u64) {
+    static mut RES: Option<([(u64, u64); 17], usize)> = None;
+    let (res, n) = unsafe { *(&raw mut RES) }.unwrap_or_else(|| {
+        let r = reserved_ranges();
+        unsafe { RES = Some(r) };
+        r
+    });
+    // RAM above 4 GiB (an 8 GB Pi 5) stays unused: DMA engines and parts of
+    // the runtime still assume 32-bit physical addresses
+    const RAM_LIMIT: u64 = 4 << 30;
+    // cut the range at every reserved overlap, lowest first
+    let mut start = base;
+    let end = base.saturating_add(size).min(RAM_LIMIT);
+    while start < end {
+        let mut cut: Option<(u64, u64)> = None;
+        for &(rb, rs) in res.iter().take(n) {
+            let re = rb.saturating_add(rs);
+            if re > start && rb < end && cut.map_or(true, |(cb, _)| rb < cb) {
+                cut = Some((rb, re));
+            }
+        }
+        match cut {
+            Some((rb, re)) => {
+                // round the reserved range out to whole frames
+                let rb = rb & !(4096u64 - 1);
+                let re = (re + 4096u64 - 1) & !(4096u64 - 1);
+                if rb > start {
+                    frame::add_free_region(start, rb - start, kernel_end);
+                }
+                start = start.max(re);
+            },
+            None => {
+                frame::add_free_region(start, end - start, kernel_end);
+                break;
+            },
         }
     }
 }

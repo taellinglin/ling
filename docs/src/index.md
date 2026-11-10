@@ -1,41 +1,82 @@
-# Ling — The Omniglot Systems Language
+# Introduction
 
-Ling is a polyglot scripting language whose keywords and builtins are available in
-**16+ human languages simultaneously** — Chinese, Thai, Korean, Japanese, English,
-Arabic, Hebrew, Russian, and more — in the same source file.
+Ling is a programming language you can write in your own language. Its keywords and
+builtins have names in more than 16 human languages, including Chinese, Japanese,
+Korean, Thai, English, Arabic, Hebrew and Russian, and you can mix them in the same
+file. These docs cover five of them: English, 中文, 日本語, 한국어 and ไทย. Pick yours
+from the language selector at the top of the page.
+
+This guide covers Ling 2030.1.53.
+
+## A first look
+
+Here is a small program. `bind start = do { ... }` is where every program begins.
 
 ```ling
-# All four in one file:
-令 启 = 执 { 印("你好") }          # Chinese
-令 เริ่ม = ดำเนินการ { พิมพ์("สวัสดี") }  # Thai
-bind start = do { print("Hello") }   # English
-바인드 시작 = 수행 { 인쇄("안녕") }      # Korean
+# Greet a few friends
+bind start = do {
+    bind friends = ["Ada", "Lin", "Sora"]
+    for name in friends {
+        print("Hello, " + name + "!")
+    }
+    print(len(friends))
+}
 ```
 
-## Core features
+```output
+Hello, Ada!
+Hello, Lin!
+Hello, Sora!
+3
+```
 
-- **Polyglot keywords** — write loops in Chinese, functions in Thai, variables in English
-- **3D software renderer** — vector geometry (`vtex_*`) and pixel textures (`tex_*`)
-- **4D spatial audio** — pentatonic synthesis with positional mixing
-- **FFT analysis** — frequency bands from any audio source
-- **Cross-platform** — native Windows/macOS/Linux and WebGL2 WASM
+The same program works with Chinese, Japanese, Korean or Thai keywords. Switch the page
+language to see it, or read [Writing in Five Languages](language/multilingual.md).
 
-## Crates
+## What you get
 
-| Crate | Version | Purpose |
-|-------|---------|---------|
-| `ling-lang` | 2030.1.3 | Main interpreter binary |
-| `ling-core` | 2030.0.0 | Core types |
-| `ling-audio` | 2030.0.0 | 4D audio + FFT |
-| `ling-game` | 2030.0.0 | ECS, mesh, physics |
-| `ling-graphics` | 2030.0.0 | 3D/4D rendering |
-| `ling-crypto` | 2030.0.0 | Cryptography |
-| `ling-net` | 2030.0.0 | Async networking |
-| `ling-ai` | 2030.0.0 | LLM / neural nets |
+One `ling` binary includes:
 
-## Quick navigation
+- **A JIT compiler and an interpreter.** Programs compile to native code through
+  Cranelift, with an interpreter for everything else.
+- **Graphics and 3D.** A window, 2D drawing, images, fonts, a software 3D renderer with
+  cameras, lights, cel shading and vector geometry (`vtex_*`).
+- **Audio and music.** Tones, spatial sound, WAV playback, music decoding, BPM and key
+  analysis, a GM-style synth and MIDI.
+- **Physics.** Rigid bodies, soft bodies and a liquid simulation.
+- **UI.** HUDs, meters, buttons and other widgets.
+- **A web server.** Routes, static files and SQLite through the `http_*` and `db_*` builtins.
+- **Cryptography.** Hashes, encryption, signatures and post-quantum key exchange.
+- **AI.** Neural networks, behaviour trees and optional language-model support.
 
-- [Syntax reference](reference/syntax.md)
-- [Vector geometry builtins](reference/vtex.md)
-- [Multilingual keyword table](multilingual/keywords.md)
-- [All builtin aliases](multilingual/builtins.md)
+`lingfu`, the project manager, creates, runs and tests projects, and `lingfu normalize`
+rewrites a whole project into one language.
+
+## Install
+
+On macOS or Linux:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://ling-lang.org/install.sh | sh
+```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://ling-lang.org/install.ps1 | iex
+```
+
+The script installs Rust if you don't have it, then builds `ling` and `lingfu`. See
+[Installation](getting-started/install.md) for other options and install profiles.
+
+## Where to go next
+
+- **[Getting Started](getting-started/install.md):** install Ling, run Hello World and
+  build your first 3D room.
+- **[Tutorials](tutorials/values.md):** learn the language step by step, from values to
+  games, music and a web service.
+- **[Language Guide](language/syntax.md):** syntax, keywords, types, errors, modules and
+  known limits.
+- **[Builtins Reference](reference/index.md):** every builtin, grouped by topic.
+- **[The Ling Book](books.md):** four free PDF books, from beginner to complete reference.
+- **[Showcase](showcase.md):** apps and demos built with Ling.

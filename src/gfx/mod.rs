@@ -17,6 +17,7 @@ pub mod audio_web;
 pub mod camera;
 pub mod color;
 pub mod depth;
+pub mod grade;
 pub mod light;
 pub mod material;
 pub mod photon;
@@ -27,8 +28,50 @@ pub mod toon;
 pub mod vtex;
 #[cfg(target_arch = "wasm32")]
 pub mod webgl;
+#[cfg(all(target_arch = "wasm32", feature = "gl-web"))]
+pub mod webgl_scene;
 #[cfg(feature = "gpu")]
 pub mod wgpu_raster;
+
+/// Per-thread pools of reusable work buffers for the full-frame passes
+/// (outlines, bloom, FXAA, depth of field). A 1080p pass needs several 2–8 MB
+/// planes; allocating them fresh every frame means fresh OS pages and a page
+/// fault on first touch of each 4 KB — measurable milliseconds per frame.
+/// `take_*` hands back a buffer of exactly `n` elements (contents unspecified),
+/// `put_*` returns it for the next frame.
+pub(crate) mod scratch {
+    use std::cell::RefCell;
+
+    macro_rules! pool {
+        ($take:ident, $put:ident, $t:ty, $tl:ident) => {
+            thread_local! {
+                static $tl: RefCell<Vec<Vec<$t>>> = const { RefCell::new(Vec::new()) };
+            }
+            pub(crate) fn $take(n: usize) -> Vec<$t> {
+                let mut v = $tl.with(|p| {
+                    let mut p = p.borrow_mut();
+                    match p.iter().position(|v| v.capacity() >= n) {
+                        Some(i) => p.swap_remove(i),
+                        None => p.pop().unwrap_or_default(),
+                    }
+                });
+                v.resize(n, <$t>::default());
+                v
+            }
+            pub(crate) fn $put(v: Vec<$t>) {
+                $tl.with(|p| {
+                    let mut p = p.borrow_mut();
+                    if p.len() < 12 {
+                        p.push(v);
+                    }
+                });
+            }
+        };
+    }
+    pool!(take_u8, put_u8, u8, POOL_U8);
+    pool!(take_u32, put_u32, u32, POOL_U32);
+    pool!(take_f32, put_f32, f32, POOL_F32);
+}
 
 pub use camera::Camera3D;
 pub use depth::DepthQueue;
@@ -139,6 +182,12 @@ pub struct GfxState {
     /// (`เติม`) so it persists across a frame's multiple flushes (like
     /// `glClear(DEPTH)`), then accumulates correct occlusion across all layers.
     pub depth_buf: Vec<f32>,
+    /// open UI layer (ui_begin): (real buffer, real w, real h, untouched virtual copy)
+    pub ui_layer: Option<(Vec<u32>, usize, usize, Vec<u32>)>,
+    /// Native scaled render: UI layers kept at their own (display) resolution and
+    /// composited AFTER the 3-D frame is upscaled, at present time — pixel text stays
+    /// crisp instead of being averaged down into the low-res frame. (off, base, w, h)
+    pub ui_overlays: Vec<(Vec<u32>, Vec<u32>, usize, usize)>,
     /// True ⇒ the next depth flush clears the z-buffer first (set by `เติม` /
     /// `clear_depth`). Lets the z-buffer span a frame's many `flush_3d` calls.
     pub zbuf_needs_clear: bool,
@@ -148,6 +197,16 @@ pub struct GfxState {
     /// tm_lens_guard: solids / quads / 3-D triangles with a corner nearer the eye than this are
     /// skipped (0 = off), so geometry brushing the camera can't smear across the whole view.
     pub lens_guard: f32,
+    /// Backface culling for `draw_triangle_3d` / mesh draws (`set_cull`):
+    /// 0 off (double-sided, default) · 1 cull triangles wound clockwise on
+    /// screen · 2 cull counter-clockwise ones. Culled faces skip lighting,
+    /// sorting and rasterising entirely. 3 = auto: per baked / textured mesh,
+    /// cull only closed meshes, on the side their own winding says is the back
+    /// (open meshes stay double-sided).
+    pub cull: u8,
+    /// `set_cull(3)` per-mesh orientation cache: id -> (tri count, first-vertex
+    /// bits, orientation); the key revalidates a recycled mesh slot.
+    pub mesh_orient: std::collections::HashMap<usize, (usize, u32, i8)>,
     /// Distance fog: triangles/lines fade toward `fog_color` from `fog_start`
     /// to `fog_end` (camera-space depth). `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -186,6 +245,9 @@ pub struct GfxState {
     /// for one stale frame right after alt-tabbing back; a short grace
     /// window after refocus swallows that instead of jerking the camera.
     pub focus_grace_frames: u8,
+    /// Saved raster layers (`layer_save` / `layer_restore`): colour + depth
+    /// snapshots of static content, recalled by id instead of re-rendering.
+    pub layers: std::collections::HashMap<i64, RasterLayer>,
     /// True when the current window is the borderless-fullscreen one
     /// (`fullscreen()`/전체화면, which sets HWND_TOPMOST so it covers the
     /// taskbar). Only that window needs its topmost style dropped on
@@ -267,9 +329,15 @@ impl GfxState {
             grad_oklab: true,
             depth_test: false,
             depth_buf: Vec::new(),
+            ui_layer: None,
+            ui_overlays: Vec::new(),
             zbuf_needs_clear: true,
             post_done: false,
             lens_guard: 0.0,
+            // LING_CULL=0..3 sets the starting set_cull mode (a launcher can turn
+            // auto culling on without the game calling set_cull)
+            cull: std::env::var("LING_CULL").ok().and_then(|v| v.trim().parse::<u8>().ok()).map_or(0, |v| v.min(3)),
+            mesh_orient: std::collections::HashMap::new(),
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0,
@@ -285,6 +353,7 @@ impl GfxState {
             mesh_cache: std::collections::HashMap::new(),
             was_active: true,
             focus_grace_frames: 0,
+            layers: std::collections::HashMap::new(),
             topmost_window: false,
             resizable: false,
             #[cfg(windows)]
@@ -344,7 +413,118 @@ impl GfxState {
             return;
         }
         toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
+        // the color-grading LUT (set_color_grade / set_color_lut): last, over the whole world layer
+        grade::apply(&mut self.buffer[..w * h]);
     }
+
+    /// Rasterise everything queued so far into the framebuffer (what
+    /// `flush_3d` does): honours the depth test and keeps the pen's blend state.
+    pub fn flush_queue(&mut self) {
+        if self.depth_queue.is_empty() {
+            return;
+        }
+        let (w, h) = (self.width, self.height);
+        let reset_z = self.zbuf_needs_clear;
+        let (bm, ba, aa) = (self.blend, self.alpha, self.antialias);
+        let queue = std::mem::take(&mut self.depth_queue);
+        raster::set_persp_zd(self.camera.zdist);
+        let z = if self.depth_test { Some(&mut self.depth_buf) } else { None };
+        queue.flush(&mut self.buffer, z, reset_z, w, h, aa);
+        self.zbuf_needs_clear = false;
+        self.depth_queue.set_state(bm, ba);
+    }
+
+    /// Could anything of the world-space sphere (center `c`, radius `r`) land on
+    /// screen? False only when it is wholly behind the near plane or off the view
+    /// (with the hyperbolic view: outside the warp's 1.85x screen-radius window) —
+    /// the same test the textured-mesh draws use, so a primitive skipped here
+    /// would not have drawn a pixel.
+    pub fn sphere_in_view(&self, c: [f32; 3], r: f32) -> bool {
+        let cam = &self.camera;
+        if !(r.is_finite() && c.iter().all(|v| v.is_finite())) {
+            return true;
+        }
+        let rw = r + 0.5;
+        let (sx, sy, rz) = cam.project(c[0], c[1], c[2]);
+        let near = -cam.zdist + 0.05;
+        if rz + rw < near {
+            return false;
+        }
+        let dd = rz + cam.zdist;
+        if dd <= rw + 0.5 {
+            return true;
+        }
+        let pr = cam.focal * rw / (dd - rw) * 1.15 + 16.0;
+        if cam.hyp_r <= 0.0 {
+            let (w, h) = (self.width as f32, self.height as f32);
+            !(sx + pr < 0.0 || sx - pr > w || sy + pr < 0.0 || sy - pr > h)
+        } else {
+            let rad = ((sx - cam.cx) * (sx - cam.cx) + (sy - cam.cy) * (sy - cam.cy)).sqrt();
+            rad - pr <= 1.85 * cam.cx
+        }
+    }
+
+    /// `layer_save(id)`: flush pending 3-D, then snapshot the frame's colour and
+    /// (when the depth test is on) depth under `id`, reusing the layer's
+    /// storage. Draw static scenery once, save it, and recall it each frame.
+    pub fn layer_save(&mut self, id: i64) {
+        self.flush_queue();
+        let (w, h) = (self.width, self.height);
+        let n = (w * h).min(self.buffer.len());
+        let depth = self.depth_test && self.depth_buf.len() >= n;
+        let layer = self.layers.entry(id).or_default();
+        layer.w = w;
+        layer.h = h;
+        layer.color.resize(n, 0);
+        par_copy(&mut layer.color, &self.buffer[..n]);
+        if depth {
+            layer.depth.resize(n, f32::INFINITY);
+            par_copy(&mut layer.depth, &self.depth_buf[..n]);
+        } else {
+            layer.depth.clear();
+        }
+    }
+
+    /// `layer_restore(id)`: put a saved layer back as the current frame —
+    /// colour, and depth so whatever is drawn next is still occluded by the
+    /// restored scenery. False (nothing changed) when there is no such layer
+    /// or the framebuffer was resized since; re-render and `layer_save` then.
+    /// Restore at the start of a frame: it replaces what is already drawn.
+    pub fn layer_restore(&mut self, id: i64) -> bool {
+        let (w, h) = (self.width, self.height);
+        let n = w * h;
+        let Some(layer) = self.layers.get(&id) else { return false };
+        if layer.w != w || layer.h != h || layer.color.len() != n || self.buffer.len() < n {
+            return false;
+        }
+        par_copy(&mut self.buffer[..n], &layer.color);
+        if layer.depth.len() == n {
+            self.depth_buf.resize(n, f32::INFINITY);
+            par_copy(&mut self.depth_buf[..n], &layer.depth);
+            self.zbuf_needs_clear = false;
+        } else {
+            self.zbuf_needs_clear = true;
+        }
+        true
+    }
+}
+
+/// A saved frame layer (see [`GfxState::layer_save`]).
+#[derive(Default)]
+pub struct RasterLayer {
+    pub w: usize,
+    pub h: usize,
+    pub color: Vec<u32>,
+    /// Empty when saved without a depth test.
+    pub depth: Vec<f32>,
+}
+
+/// Multi-threaded memcpy for full-frame buffers (one 1080p frame is 8 MB).
+#[cfg(not(target_arch = "wasm32"))]
+fn par_copy<T: Copy + Send + Sync>(dst: &mut [T], src: &[T]) {
+    use rayon::prelude::*;
+    const CH: usize = 64 * 1024;
+    dst.par_chunks_mut(CH).zip(src.par_chunks(CH)).for_each(|(d, s)| d.copy_from_slice(s));
 }
 
 // ─── WASM keyboard state (thread-local, accessed from JS via wasm_bindgen) ────
@@ -355,6 +535,127 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashSet::new());
     static WASM_KEYS_DOWN: std::cell::RefCell<std::collections::HashSet<String>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+
+// ─── WASM host display state: detached UI layer, display size, live resize ────
+// The browser shows the 3-D frame (low-res, for speed) and the UI as TWO stacked
+// canvases: with ui_detach(1) a ui_begin/ui_end layer is not composited into the
+// frame but kept here at its virtual (screen-sized) resolution and posted to the
+// page separately, so pixel text never gets shrunk with the scene.
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static UI_DETACH: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static UI_OVERLAY: std::cell::RefCell<(Vec<u32>, usize, usize, bool)> = std::cell::RefCell::new((Vec::new(), 0, 0, false));
+    static DISPLAY: std::cell::Cell<(f64, f64)> = std::cell::Cell::new((0.0, 0.0));
+    static PENDING_RESIZE: std::cell::Cell<Option<(usize, usize)>> = std::cell::Cell::new(None);
+}
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_set_display(w: f64, h: f64) { DISPLAY.with(|d| d.set((w, h))); }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_display() -> (f64, f64) { DISPLAY.with(|d| d.get()) }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_request_resize(w: usize, h: usize) { PENDING_RESIZE.with(|p| p.set(Some((w.max(64), h.max(64))))); }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_take_resize() -> Option<(usize, usize)> { PENDING_RESIZE.with(|p| p.take()) }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_ui_detach(on: bool) { UI_DETACH.with(|d| d.set(on)); }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_ui_detached() -> bool { UI_DETACH.with(|d| d.get()) }
+/// ui_end in detached mode: copy the pixels this layer changed into the overlay.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_ui_overlay_put(off: &[u32], base: &[u32], vw: usize, vh: usize) {
+    UI_OVERLAY.with(|o| {
+        let mut o = o.borrow_mut();
+        if o.1 != vw || o.2 != vh || o.0.len() != vw * vh {
+            *o = (vec![0u32; vw * vh], vw, vh, false);
+        }
+        for i in 0..(vw * vh).min(off.len()).min(base.len()) {
+            if off[i] != base[i] {
+                o.0[i] = 0xFF00_0000 | (off[i] & 0x00FF_FFFF);
+            }
+        }
+        o.3 = true;
+    });
+}
+/// present: hand the frame's overlay to the page (None when no UI was drawn) and reset it.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_ui_overlay_take() -> Option<(Vec<u8>, usize, usize)> {
+    UI_OVERLAY.with(|o| {
+        let mut o = o.borrow_mut();
+        if !o.3 {
+            return None;
+        }
+        let (w, h) = (o.1, o.2);
+        let mut px = vec![0u8; w * h * 4];
+        for (i, c) in o.0.iter_mut().enumerate() {
+            let v = *c;
+            if v >> 24 != 0 {
+                px[i * 4] = ((v >> 16) & 255) as u8;
+                px[i * 4 + 1] = ((v >> 8) & 255) as u8;
+                px[i * 4 + 2] = (v & 255) as u8;
+                px[i * 4 + 3] = 255;
+                *c = 0;
+            }
+        }
+        o.3 = false;
+        Some((px, w, h))
+    })
+}
+
+// ─── native Unicode text input (IME / non-ASCII keyboards) ──────────────────
+// minifb reports WM_CHAR code points through an InputCallback. ASCII keeps going
+// through the VK polling path, so only code points >= 0x80 are queued here.
+#[cfg(not(target_arch = "wasm32"))]
+static NATIVE_TEXT: std::sync::Mutex<Vec<char>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct UnicodeInput;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl minifb::InputCallback for UnicodeInput {
+    fn add_char(&mut self, uni_char: u32) {
+        if uni_char >= 0x80 {
+            if let Some(c) = char::from_u32(uni_char) {
+                if !c.is_control() {
+                    if let Ok(mut q) = NATIVE_TEXT.lock() {
+                        if q.len() < 256 {
+                            q.push(c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Take the non-ASCII characters typed since the last call.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn native_text_drain() -> Vec<char> {
+    NATIVE_TEXT.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
+}
+
+// ─── WASM text input (typed characters for text_poll) ────────────────────────
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WASM_TEXT: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+}
+
+/// Called from JavaScript with typed / pasted / IME-composed text. "\u{8}" means Backspace.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_text_input(s: &str) {
+    WASM_TEXT.with(|q| {
+        let mut q = q.borrow_mut();
+        if q.len() < 512 {
+            q.push(s.to_string());
+        }
+    });
+}
+
+/// Take everything typed since the last call.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_text_drain() -> Vec<String> {
+    WASM_TEXT.with(|q| std::mem::take(&mut *q.borrow_mut()))
 }
 
 /// Called from JavaScript when a key is pressed down
@@ -393,6 +694,10 @@ pub fn wasm_clear_frame_keys() {
     WASM_KEYS_PRESSED.with(|keys| {
         keys.borrow_mut().clear();
     });
+    // mouse_dx()/mouse_dy() are per-frame deltas: without this reset they
+    // accumulated forever (a right-drag orbit pinned the pitch at its clamp
+    // and kept spinning the yaw)
+    wasm_clear_frame_mouse_delta();
 }
 
 /// Check if a key was pressed this frame
@@ -516,9 +821,13 @@ fn normalize_key(key: &str) -> String {
         "ArrowRight" => "right".to_string(),
         "Enter" => "enter".to_string(),
         "Escape" => "escape".to_string(),
-        "Shift" | "ShiftLeft" | "ShiftRight" => "shift".to_string(),
-        "Control" | "ControlLeft" | "ControlRight" => "ctrl".to_string(),
-        "Alt" | "AltLeft" | "AltRight" => "alt".to_string(),
+        // the browser reports one "Shift" for either side; desktop scripts ask for
+        // a side ("lshift") — on the web both sides answer as the one key
+        "Shift" | "ShiftLeft" | "ShiftRight" | "lshift" | "rshift" | "leftshift" | "rightshift"
+        | "left_shift" | "right_shift" | "LShift" | "RShift" => "shift".to_string(),
+        "Control" | "ControlLeft" | "ControlRight" | "lctrl" | "rctrl" | "leftctrl" | "rightctrl"
+        | "lcontrol" | "rcontrol" => "ctrl".to_string(),
+        "Alt" | "AltLeft" | "AltRight" | "lalt" | "ralt" | "leftalt" | "rightalt" => "alt".to_string(),
         "Tab" => "tab".to_string(),
         "Backspace" => "backspace".to_string(),
         _ => key.to_lowercase(),
@@ -574,6 +883,12 @@ pub struct GfxState {
     pub depth_test: bool,
     /// Z-buffer (camera-space depth per pixel).
     pub depth_buf: Vec<f32>,
+    /// open UI layer (ui_begin): (real buffer, real w, real h, untouched virtual copy)
+    pub ui_layer: Option<(Vec<u32>, usize, usize, Vec<u32>)>,
+    /// Native scaled render: UI layers kept at their own (display) resolution and
+    /// composited AFTER the 3-D frame is upscaled, at present time — pixel text stays
+    /// crisp instead of being averaged down into the low-res frame. (off, base, w, h)
+    pub ui_overlays: Vec<(Vec<u32>, Vec<u32>, usize, usize)>,
     /// Mirrors native: next depth flush clears the z-buffer first.
     pub zbuf_needs_clear: bool,
     /// Mirrors native: `flush_post` ran the post-chain; `present` skips it.
@@ -642,6 +957,8 @@ impl GfxState {
             grad_oklab: true,
             depth_test: false,
             depth_buf: Vec::new(),
+            ui_layer: None,
+            ui_overlays: Vec::new(),
             zbuf_needs_clear: true,
             post_done: false,
             lens_guard: 0.0,
@@ -716,7 +1033,12 @@ impl GfxState {
         if self.buffer.len() < w * h {
             return;
         }
+        let t0 = std::time::Instant::now();
         toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
+        grade::apply(&mut self.buffer[..w * h]);
+        if std::env::var_os("LING_GPU_LOG").is_some() {
+            eprintln!("[post] toon::apply {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        }
     }
 }
 
@@ -739,6 +1061,32 @@ impl GfxState {
         cy: f32,
         cz: f32,
     ) {
+        let near = -self.camera.zdist + 0.05;
+        // Warp each vertex once (the hyperbolic warp is the costly part of a
+        // projection); depth, clipping and projection all work on the warped
+        // points, lighting on the true world positions.
+        let ha = self.camera.hyper(ax, ay, az);
+        let hb = self.camera.hyper(bx, by, bz);
+        let hc = self.camera.hyper(cx, cy, cz);
+        let da = self.camera.depth_unwarped(ha.0, ha.1, ha.2);
+        let db = self.camera.depth_unwarped(hb.0, hb.1, hb.2);
+        let dc = self.camera.depth_unwarped(hc.0, hc.1, hc.2);
+        // wholly behind the near plane: nothing to light, clip or push
+        if da <= near && db <= near && dc <= near {
+            return;
+        }
+        // backface cull on the projected winding, before any lighting work.
+        // (Triangles crossing the near plane are kept: their projection flips.)
+        if (self.cull == 1 || self.cull == 2) && da > near && db > near && dc > near {
+            let pa = self.camera.project_unwarped(ha.0, ha.1, ha.2);
+            let pb = self.camera.project_unwarped(hb.0, hb.1, hb.2);
+            let pc = self.camera.project_unwarped(hc.0, hc.1, hc.2);
+            // > 0: clockwise on screen (y grows downward)
+            let area = (pb.0 - pa.0) * (pc.1 - pa.1) - (pb.1 - pa.1) * (pc.0 - pa.0);
+            if (self.cull == 1 && area > 0.0) || (self.cull == 2 && area < 0.0) {
+                return;
+            }
+        }
         let ux = bx - ax;
         let uy = by - ay;
         let uz = bz - az;
@@ -799,17 +1147,16 @@ impl GfxState {
             )
         };
 
-        let near = -self.camera.zdist + 0.05;
         if self.lens_guard > 0.0 {
             let g = near + self.lens_guard;
-            if self.camera.depth(ax, ay, az) < g || self.camera.depth(bx, by, bz) < g || self.camera.depth(cx, cy, cz) < g {
+            if da < g || db < g || dc < g {
                 return;
             }
         }
         let vw = [
-            (ax, ay, az, self.camera.depth(ax, ay, az), c0),
-            (bx, by, bz, self.camera.depth(bx, by, bz), c1),
-            (cx, cy, cz, self.camera.depth(cx, cy, cz), c2),
+            (ha.0, ha.1, ha.2, da, c0),
+            (hb.0, hb.1, hb.2, db, c1),
+            (hc.0, hc.1, hc.2, dc, c2),
         ];
         let mut poly: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
         let mut pn = 0usize;
@@ -841,7 +1188,7 @@ impl GfxState {
         let mut proj: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
         let mut pi = 0;
         while pi < pn {
-            let (sx, sy, sz) = self.camera.project(poly[pi].0, poly[pi].1, poly[pi].2);
+            let (sx, sy, sz) = self.camera.project_unwarped(poly[pi].0, poly[pi].1, poly[pi].2);
             let fc = self.fog_apply(poly[pi].3, sz);
             proj[pi] = (sx, sy, sz, fc);
             pi += 1;
@@ -909,6 +1256,23 @@ impl GfxState {
         let fz = rx * uy - ry * ux;
         let pen = self.color;
         let mesh = std::mem::take(&mut self.meshes[id]);
+        // set_cull(3): cull this mesh only if it is closed, on its own back side
+        let saved_cull = self.cull;
+        if saved_cull == 3 {
+            let key = (mesh.len(), mesh.first().map_or(0, |t| t.0[0].to_bits()));
+            let orient = match self.mesh_orient.get(&id) {
+                Some(&(n, f, o)) if (n, f) == key => o,
+                _ => {
+                    let o = poly::closed_mesh_orientation(
+                        mesh.iter().map(|(t, _)| [[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]),
+                    );
+                    self.mesh_orient.insert(id, (key.0, key.1, o));
+                    o
+                },
+            };
+            // the frame (r, u, r x u) is a proper rotation; only a negative scale mirrors
+            self.cull = poly::auto_cull_mode(orient, s);
+        }
         for (t, col) in &mesh {
             if use_baked_color {
                 self.color = *col;
@@ -925,6 +1289,218 @@ impl GfxState {
             self.submit_triangle(wx0, wy0, wz0, wx1, wy1, wz1, wx2, wy2, wz2);
         }
         self.color = pen;
+        self.cull = saved_cull;
         self.meshes[id] = mesh;
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod layer_tests {
+    use super::*;
+
+    fn state(w: usize, h: usize) -> GfxState {
+        let mut g = GfxState::new();
+        (g.width, g.height) = (w, h);
+        g.buffer = vec![0x0010_2030; w * h];
+        g.depth_test = true;
+        g.zbuf_needs_clear = true;
+        g
+    }
+
+    #[test]
+    fn layer_round_trips_colour_and_depth_and_keeps_occlusion() {
+        let (w, h) = (160, 120);
+        let mut g = state(w, h);
+        raster::set_persp_zd(5.0);
+        // static "wall" at depth 10 over the left half
+        g.depth_queue.push_triangle_zv(0x00AA_0000, 0.0, 0.0, 10.0, 80.0, 0.0, 10.0, 0.0, 120.0, 10.0);
+        g.depth_queue.push_triangle_zv(0x00AA_0000, 80.0, 0.0, 10.0, 80.0, 120.0, 10.0, 0.0, 120.0, 10.0);
+        g.layer_save(7);
+        let (saved_c, saved_z) = (g.buffer.clone(), g.depth_buf.clone());
+        // next frame: scribble, then restore
+        g.buffer.fill(0);
+        g.depth_buf.fill(0.0);
+        g.zbuf_needs_clear = true;
+        assert!(g.layer_restore(7));
+        assert_eq!(g.buffer, saved_c);
+        assert_eq!(g.depth_buf, saved_z);
+        // a dynamic quad BEHIND the restored wall must stay hidden where the wall is
+        g.depth_queue.push_triangle_zv(0x0000_00FF, 40.0, 40.0, 20.0, 120.0, 40.0, 20.0, 40.0, 80.0, 20.0);
+        g.flush_queue();
+        assert_eq!(g.buffer[60 * w + 50] & RGB_MASK, 0x00AA_0000, "wall occludes the far object");
+        assert_eq!(g.buffer[45 * w + 100] & RGB_MASK, 0x0000_00FF, "far object visible beside the wall");
+        // resized framebuffer: stale layer refuses to restore
+        let mut g2 = state(w + 1, h);
+        g2.layers = std::mem::take(&mut g.layers);
+        assert!(!g2.layer_restore(7));
+        assert!(!g2.layer_restore(99));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cull_tests {
+    use super::*;
+
+    /// A closed cube drawn with each cull mode: exactly one mode must give the
+    /// same image as no culling (front faces win the z-test anyway) while
+    /// submitting about half the triangles; the other shows inside faces.
+    #[test]
+    fn one_cull_mode_matches_double_sided_with_half_the_triangles() {
+        let (w, h) = (200usize, 150usize);
+        let v = |i: u32| -> [f32; 3] { [if i & 1 != 0 { 0.5 } else { -0.5 }, if i & 2 != 0 { 0.5 } else { -0.5 }, if i & 4 != 0 { 0.5 } else { -0.5 }] };
+        // consistently wound faces (outward normals by the right-hand rule)
+        let faces = [[0u32, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
+        let mut tris = Vec::new();
+        for (k, f) in faces.iter().enumerate() {
+            for t in [[f[0], f[1], f[2]], [f[0], f[2], f[3]]] {
+                let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+                tris.push(([a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]], 0x203040 + 0x202000 * k as u32));
+            }
+        }
+        let render = |cull: u8| -> (Vec<u32>, usize) {
+            let mut g = GfxState::new();
+            (g.width, g.height) = (w, h);
+            g.buffer = vec![0; w * h];
+            g.depth_test = true;
+            g.zbuf_needs_clear = true;
+            g.flat_shade = true;
+            g.camera.cx = 100.0;
+            g.camera.cy = 75.0;
+            g.camera.focal = 150.0;
+            let (a, b) = (0.6f32, 0.4f32);
+            (g.camera.cry, g.camera.sry, g.camera.crx, g.camera.srx) = (a.cos(), a.sin(), b.cos(), b.sin());
+            g.cull = cull;
+            let id = g.mesh_register(tris.clone());
+            g.mesh_draw(id, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, true);
+            let n = g.depth_queue.calls.len();
+            g.flush_queue();
+            (g.buffer, n)
+        };
+        let (none, n0) = render(0);
+        let (c1, n1) = render(1);
+        let (c2, n2) = render(2);
+        assert_eq!(n0, 12);
+        assert_eq!(n1 + n2, 12, "every face is culled by exactly one mode");
+        let same1 = c1 == none;
+        let same2 = c2 == none;
+        assert!(same1 ^ same2, "exactly one cull mode keeps the double-sided image");
+        assert!(n1.min(n2) <= 6 && n1.max(n2) >= 6);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod auto_cull_tests {
+    use super::*;
+
+    fn cube(outward: bool) -> Vec<([f32; 9], u32)> {
+        let v = |i: u32| -> [f32; 3] { [if i & 1 != 0 { 0.5 } else { -0.5 }, if i & 2 != 0 { 0.5 } else { -0.5 }, if i & 4 != 0 { 0.5 } else { -0.5 }] };
+        let faces = [[0u32, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
+        let mut tris = Vec::new();
+        for (k, f) in faces.iter().enumerate() {
+            for t in [[f[0], f[1], f[2]], [f[0], f[2], f[3]]] {
+                let t = if outward { t } else { [t[0], t[2], t[1]] };
+                let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+                tris.push(([a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]], 0x203040 + 0x202000 * k as u32));
+            }
+        }
+        tris
+    }
+
+    /// Render `mesh` at the origin with cull mode `cull`, through a camera with
+    /// the hyperbolic warp ON and a wide FOV. Returns (image, submitted tris).
+    fn render(mesh: &[([f32; 9], u32)], cull: u8, scale: f32) -> (Vec<u32>, usize) {
+        let (w, h) = (220usize, 160usize);
+        let mut g = GfxState::new();
+        (g.width, g.height) = (w, h);
+        g.buffer = vec![0; w * h];
+        g.depth_test = true;
+        g.zbuf_needs_clear = true;
+        g.flat_shade = true;
+        g.camera.cx = 110.0;
+        g.camera.cy = 80.0;
+        g.camera.focal = 90.0; // wide FOV
+        let (a, b) = (0.7f32, 0.35f32);
+        (g.camera.cry, g.camera.sry, g.camera.crx, g.camera.srx) = (a.cos(), a.sin(), b.cos(), b.sin());
+        (g.camera.hyp_r, g.camera.hyp_s, g.camera.hx, g.camera.hy, g.camera.hz) = (3.0, 0.4, 0.2, 0.0, 0.3);
+        g.cull = cull;
+        let id = g.mesh_register(mesh.to_vec());
+        g.mesh_draw(id, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, scale, true);
+        let n = g.depth_queue.calls.len();
+        assert_eq!(g.cull, cull, "mesh_draw must restore the pen's cull mode");
+        g.flush_queue();
+        (g.buffer, n)
+    }
+
+    #[test]
+    fn orientation_detects_closed_and_open_meshes() {
+        let tri = |m: &[([f32; 9], u32)]| m.iter().map(|(t, _)| [[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]).collect::<Vec<_>>();
+        let out = poly::closed_mesh_orientation(tri(&cube(true)));
+        let inv = poly::closed_mesh_orientation(tri(&cube(false)));
+        assert!(out != 0 && inv == -out, "closed cube: {out}, inside-out: {inv}");
+        // an open box (one face missing) must never be culled
+        let open: Vec<_> = cube(true).into_iter().skip(2).collect();
+        assert_eq!(poly::closed_mesh_orientation(tri(&open)), 0);
+    }
+
+    #[test]
+    fn auto_cull_keeps_the_image_and_drops_back_faces_under_hyperbolic_warp() {
+        for (outward, scale) in [(true, 1.0f32), (false, 1.0), (true, -1.0), (false, -1.0)] {
+            let mesh = cube(outward);
+            let (full, n_full) = render(&mesh, 0, scale);
+            let (auto, n_auto) = render(&mesh, 3, scale);
+            assert_eq!(n_full, 12);
+            assert!(n_auto < n_full, "outward={outward} scale={scale}: auto culled nothing ({n_auto})");
+            assert_eq!(auto, full, "outward={outward} scale={scale}: auto cull changed the image");
+        }
+        // open mesh: auto leaves every face
+        let open: Vec<_> = cube(true).into_iter().skip(2).collect();
+        let (a, na) = render(&open, 0, 1.0);
+        let (b, nb) = render(&open, 3, 1.0);
+        assert_eq!((na, a), (nb, b));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod view_cull_tests {
+    use super::*;
+
+    /// Every sphere `sphere_in_view` rejects must draw nothing when rendered for real
+    /// (with and without the hyperbolic warp), and it must keep a fair share.
+    #[test]
+    fn rejected_spheres_draw_no_pixels() {
+        for hyper in [false, true] {
+            let (w, h) = (240usize, 160usize);
+            let mut seed = 0x2545F4914F6CDD1Du64;
+            let mut rnd = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; (seed >> 40) as f32 / (1u64 << 24) as f32 };
+            let (mut rejected, mut kept) = (0, 0);
+            for _ in 0..400 {
+                let mut g = GfxState::new();
+                (g.width, g.height) = (w, h);
+                g.buffer = vec![0; w * h];
+                g.depth_test = true;
+                g.zbuf_needs_clear = true;
+                g.flat_shade = true;
+                g.color = 0xFFFFFF;
+                (g.camera.cx, g.camera.cy, g.camera.focal) = (120.0, 80.0, 140.0);
+                let (a, b) = (0.4f32, 0.3f32);
+                (g.camera.cry, g.camera.sry, g.camera.crx, g.camera.srx) = (a.cos(), a.sin(), b.cos(), b.sin());
+                if hyper {
+                    (g.camera.hyp_r, g.camera.hyp_s) = (12.0, 0.4);
+                }
+                let c = [(rnd() - 0.5) * 80.0, (rnd() - 0.5) * 40.0, (rnd() - 0.5) * 80.0];
+                let s = 0.3 + rnd() * 4.0;
+                let base = shapes::base_radius("sphere", 10.0, 6.0, 0.0).unwrap();
+                if g.sphere_in_view(c, base * s) {
+                    kept += 1;
+                    continue;
+                }
+                rejected += 1;
+                let m = shapes::build("sphere", [c[0], c[1], c[2], s, s, s, 0.0, 0.0, 0.0], 10.0, 6.0, 0.0).unwrap();
+                g.emit_mesh(&m, 0);
+                g.flush_queue();
+                assert!(g.buffer.iter().all(|&p| p == 0), "hyper={hyper}: culled sphere at {c:?} r={s} drew pixels");
+            }
+            assert!(rejected > 50 && kept > 50, "hyper={hyper}: rejected {rejected}, kept {kept}");
+        }
     }
 }

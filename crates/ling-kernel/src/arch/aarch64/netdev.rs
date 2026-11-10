@@ -29,19 +29,27 @@ pub fn mac() -> [u8; 6] {
 }
 
 pub fn transmit(buf: &[u8]) -> bool {
-    if wifi::is_joined() {
+    let ok = if wifi::is_joined() {
         wifi::transmit(buf)
     } else {
         rp1_eth::transmit(buf)
+    };
+    if ok {
+        crate::kstats::net_tx(buf.len());
     }
+    ok
 }
 
 pub fn receive(out: &mut [u8]) -> Option<usize> {
-    if wifi::is_joined() {
+    let r = if wifi::is_joined() {
         wifi::receive(out)
     } else {
         rp1_eth::receive(out)
+    };
+    if let Some(n) = r {
+        crate::kstats::net_rx(n);
     }
+    r
 }
 
 pub fn self_ip() -> [u8; 4] {

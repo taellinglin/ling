@@ -235,6 +235,17 @@ fn check_stack_guards() {
             }
         }
     }
+    // slot 0 runs on the boot stack (arch/x86_64/boot.rs), which has its own canary
+    #[cfg(target_arch = "x86_64")]
+    if !crate::arch::boot::stack_guard_ok() {
+        panic!("stack overflow: the boot stack (task slot 0, the desktop) ran out of its 4 MiB");
+    }
+}
+
+/// Is the running task the main one (slot 0: the desktop / the running program)?
+/// Background tasks (SSH server, chat listener, icon loader) are the others.
+pub fn is_main() -> bool {
+    unsafe { !STARTED || CURRENT == 0 }
 }
 
 pub fn yield_now() {
@@ -261,6 +272,7 @@ pub fn yield_now() {
         }
         TASKS[next].state = TaskState::Running;
         CURRENT = next;
+        crate::kstats::switched();
 
         let save_ptr = &raw mut TASKS[prev].sp;
         let new_sp = TASKS[next].sp;

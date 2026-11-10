@@ -12,6 +12,7 @@ use base64::Engine;
 use image::RgbaImage;
 
 const MAX_SIDE: u32 = 2048;
+#[cfg_attr(not(feature = "web"), allow(dead_code))] // http fetch cap (web)
 const MAX_BYTES: usize = 24 * 1024 * 1024;
 /// at most this many fetches in flight; the rest wait their turn
 const MAX_WORKERS: usize = 6;

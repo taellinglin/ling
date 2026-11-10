@@ -1,86 +1,47 @@
-# Ling — Showcase
+# Showcase
 
-**Ling is the omniglot creative-systems language**: you write the *same* program in
-**English, 中文, 日本語, 한국어, or ไทย** — keywords, builtins, even file names — and it runs
-identically. One small native binary gives you a 3D/4D holographic renderer, vector fonts,
-a UI toolkit, a music studio (decode · BPM/key · GM synth · MIDI · karaoke), spatial audio,
-post-quantum crypto, and a physics lab — no engine install, no package soup.
+These apps and demos are written in Ling and run on the Ling runtime. Screenshots of
+the apps are on the website: [ling-lang.org/#apps](https://ling-lang.org/#apps).
 
-```ling
-# the same program, four ways — all run:
-bind start = do { open_window(800, 600)  draw_disc(400.0, 300.0, 120.0)  present() }
-绑定 开始 = 做 { 开窗(800.0, 600.0)  画实心圆(400.0, 300.0, 120.0)  显() }
-バインド 開始 = 実行 { ウィンドウ開く(800,600)  塗りつぶし円(400,300,120)  表示() }
-ผูก เริ่ม = ทำ { เปิดหน้าต่าง(800,600)  วาดวงกลมทึบ(400,300,120)  แสดงผล() }
-```
+## Apps
 
-`lingfu normalize <lang>` rewrites any Ling project into a single language — so a team can
-each read the code in their own tongue and commit a normalized form.
+| App | What it is |
+|---|---|
+| **LingStationX** | A digital audio workstation: arranger, piano roll, tracker, session view, a node-graph patcher, a mixer and the Nova, Prism and Growl synths. It imports MIDI and has a slicer, time-warp and a mastering chain. |
+| **LingDev** | A 3D game editor with a node tree, a timeline and cutscene tracks for camera, dialog and effects. Games made with it include Dance Ling, Ling Hazard, Ling Breaker, Moko, Ling Agent and the Soul Symphony series. |
+| **LingModeler** | Modelling, rigging, weight painting, posing and animation, plus vector illustration, 2D animation with onion skin and procedural textures. It also runs inside LingOS on x86-64 and Raspberry Pi. |
+| **LingForFun** | An online action RPG with an overworld, towns, dungeons, flight, combat and quests. It has a desktop client, a WASM browser client and a server cluster, all in Ling. Written with Chinese keywords. In development. |
+| **Ling Arcade** | A console-game library with an NES emulator written in Ling: the 6502 CPU, PPU, mappers and APU are plain `.ling` code on Ling's JIT. It passes the full nestest log (8,991 instructions, cycle-exact). |
+| **Ling Wallet** | A post-quantum privacy wallet, full node and miner for LNG: ML-DSA-87 identities and hybrid ML-KEM-1024 + X25519 key exchange. Experimental and unaudited. |
 
-## What makes Ling unique
+## Community projects
 
-- **Polyglot by design** — five human languages are first-class, not comments or i18n strings.
-  Every keyword and ~hundreds of builtins have native aliases; the lexer/parser accept any mix.
-- **Batteries *welded* in** — graphics, vector fonts, UI, music, MIDI, spatial audio, crypto,
-  physics and AI tensors ship in the one toolchain. First pixel in ~5 lines.
-- **3D *and* 4D / holographic** — a depth-sorted software renderer with a cel/holographic shader,
-  4D camera projection, and vector-texture primitives (`vtex_*`).
-- **Resolution-independent vector fonts** — TrueType outlines cached as `.ling` glyph files and
-  rendered (stroke or fill) crisp in 2D/3D/4D, in every script (灵 · ABC · あ · 가 · ก).
-- **A real music layer** — load WAV/FLAC/OGG/MP3, extract BPM & musical key, synthesize *any*
-  GM-style instrument from a `.ling` patch, read MIDI, build rhythm games & karaoke.
-- **Post-quantum crypto built in** — hashes, AEAD, signatures, ML-KEM/X25519 hybrids, Shamir,
-  Schnorr/VRF — usable from a script in one call.
-- **Physics from a script** — rigid + **angular** dynamics, **deformable soft-body** meshes, and
-  a **fast immiscible water/oil liquid sim** that maps onto plane/sphere/cylinder/cone/dome.
-- **Tiny & native** — one binary, software-rendered (no GPU driver required), runs headless for
-  CI frame-capture; also targets WASM.
+| Project | What it is |
+|---|---|
+| [**Soul Symphony**](https://github.com/taellinglin/soul-symphony-ling-edition) | An RPG arcade physics game. Roll an orb across 9 procedural levels with a boss fight after each one. Arcade versus, networking and co-op, in 5 languages. |
+| [**LingSoul**](https://github.com/taellinglin/LingSoul) | An atmospheric soul-balance sim in Ling's wireframe style, with a constructed glyph alphabet for its in-world HUD. |
 
-## How Ling compares
+## Demos in the repository
 
-Legend: ● built-in · ◐ partial / via add-on · ○ not a goal.
-
-| Capability | **Ling** | Unity | Godot | Bevy (Rust) | Pygame | p5.js | LÖVE |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Source in 5 human languages | ● | ○ | ○ | ○ | ○ | ○ | ○ |
-| Single self-contained binary | ● | ○ | ◐ | ● | ◐ | ○ | ◐ |
-| No GPU/driver required (software) | ● | ○ | ○ | ○ | ● | ◐ | ○ |
-| 3D rendering | ● | ● | ● | ● | ○ | ◐ | ○ |
-| 4D / hyperbolic / holographic | ● | ○ | ○ | ○ | ○ | ○ | ○ |
-| Vector fonts (2D/3D/4D) | ● | ◐ | ◐ | ◐ | ◐ | ◐ | ◐ |
-| Immediate-mode UI toolkit | ● | ◐ | ● | ◐ | ○ | ○ | ◐ |
-| Audio playback | ● | ● | ● | ● | ● | ● | ● |
-| Spatial (3D/4D) audio + FX | ● | ● | ● | ◐ | ○ | ◐ | ◐ |
-| BPM / musical-key analysis | ● | ○ | ○ | ○ | ○ | ◐ | ○ |
-| GM-style synth from a patch file | ● | ◐ | ◐ | ○ | ○ | ◐ | ○ |
-| MIDI load + rhythm/karaoke kit | ● | ◐ | ◐ | ○ | ◐ | ◐ | ○ |
-| Rigid + angular physics | ● | ● | ● | ◐ | ○ | ○ | ◐ |
-| Soft-body / deformable mesh | ● | ◐ | ◐ | ◐ | ○ | ○ | ○ |
-| Fast immiscible liquid sim | ● | ◐ | ◐ | ○ | ○ | ○ | ○ |
-| Post-quantum crypto built in | ● | ○ | ○ | ○ | ○ | ○ | ○ |
-| Headless CI frame capture | ● | ◐ | ◐ | ◐ | ◐ | ○ | ◐ |
-| Lines to first pixel | **~5** | many | ~15 | ~40 | ~10 | ~5 | ~8 |
-
-> Comparisons are about *what ships in the box*. Mature engines like Unity/Godot/Bevy have far
-> deeper 3D pipelines, tooling and ecosystems — Ling's angle is breadth-in-one-binary plus the
-> things no one else has: **truly multilingual source**, **4D/holographic vector rendering**,
-> built-in **music analysis + GM synth**, and **post-quantum crypto**.
-
-## See it run
+The [Ling repository](https://github.com/taellinglin/ling) has many runnable examples.
+A few to start with:
 
 | Demo | What it shows |
 |---|---|
-| `examples/music/hallway_runner.ling` | Auto-playing FFT-reactive infinite runner; MIDI-driven coins ring the melody as spatial SFX |
-| `examples/music/karaoke_hero.ling` | Karaoke-Hero pitch bars from a vocal MIDI + live mic tuner |
+| `examples/music/hallway_runner.ling` | An infinite runner that reacts to the music; coins ring the melody as spatial sound |
+| `examples/music/karaoke_hero.ling` | Karaoke pitch bars from a vocal MIDI, with a live microphone tuner |
 | `examples/music/synth_jam.ling` | GM instruments synthesized from `.ling` patches |
-| `examples/physics/bouncy_ball.ling` | Spring-mass soft body squashing as it bounces |
-| `examples/physics/tumbling.ling` | Rigid bodies tumbling & rolling (angular dynamics) |
-| `examples/physics/liquid_marble.ling` | Water+oil sim mapped onto a spinning sphere/cone/dome |
-| `examples/ui/hud_showcase.ling` | The full vector UI toolkit (HUD, meters, controls, game UI) |
-| `examples/crypto/crypto_donut_physics.ling` | A SHA3 hash → a bouncing knot-torus with reactive audio |
+| `examples/physics/bouncy_ball.ling` | A spring-mass soft body that squashes as it bounces |
+| `examples/physics/tumbling.ling` | Rigid bodies tumbling and rolling |
+| `examples/physics/liquid_marble.ling` | A water and oil simulation on a spinning sphere, cone and dome |
+| `examples/ui/hud_showcase.ling` | The UI toolkit: HUD, meters, controls and game widgets |
+| `examples/crypto/crypto_donut_physics.ling` | A SHA3 hash shapes a bouncing torus knot, with reactive audio |
+
+Run one from the repository root:
 
 ```sh
-cargo run --bin ling -- examples/physics/liquid_marble.ling
+ling run examples/physics/liquid_marble.ling
 ```
 
-See the full reference (in 5 languages) at **https://docs.ling-lang.org**.
+The [Examples](examples/dao-chamber.md) section of these docs walks through four 3D scenes
+in more detail.

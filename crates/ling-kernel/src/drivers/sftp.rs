@@ -61,8 +61,12 @@ const PF_TRUNC: u32 = 0x10;
 const PF_EXCL: u32 = 0x20;
 
 const ATTR_SIZE: u32 = 0x01;
+const ATTR_UIDGID: u32 = 0x02;
 const ATTR_PERMISSIONS: u32 = 0x04;
 const ATTR_ACMODTIME: u32 = 0x08;
+const ATTR_EXTENDED: u32 = 0x8000_0000;
+
+const FXP_EXTENDED_REPLY: u8 = 201;
 
 /// lingfs's whole-file cap; a bigger upload fails at the write, not at CLOSE.
 const MAX_FILE: usize = 64 * 1024 * 1024;
@@ -71,7 +75,7 @@ const MAX_PACKET: usize = 512 * 1024;
 
 enum Handle {
     File { path: String, data: Vec<u8>, dirty: bool, writable: bool },
-    Dir { entries: Vec<(String, bool, u64)>, pos: usize },
+    Dir { dir: String, entries: Vec<(String, bool, u64)>, pos: usize },
 }
 
 pub struct Sftp {
@@ -139,24 +143,61 @@ fn mtime() -> u32 {
     crate::lingapp::wall_time() as u32
 }
 
-fn put_attrs(o: &mut Vec<u8>, is_dir: bool, size: u64) {
+/// The mode a path reports: what `chmod` set (files under home/), else the default for its kind.
+fn mode_of(path: &str, is_dir: bool) -> u32 {
+    if in_home(path) {
+        crate::modes::get(path, is_dir)
+    } else if is_dir {
+        crate::modes::DEFAULT_DIR
+    } else {
+        crate::modes::DEFAULT_FILE
+    }
+}
+
+fn put_attrs(o: &mut Vec<u8>, is_dir: bool, size: u64, mode: u32) {
     put_u32(o, ATTR_SIZE | ATTR_PERMISSIONS | ATTR_ACMODTIME);
     put_u64(o, size);
-    put_u32(o, if is_dir { 0o40755 } else { 0o100644 });
+    put_u32(o, (if is_dir { 0o040000 } else { 0o100000 }) | (mode & 0o7777));
     let t = mtime();
     put_u32(o, t);
     put_u32(o, t);
 }
 
-fn longname(name: &str, is_dir: bool, size: u64, owner: &str) -> String {
-    format!(
-        "{}    1 {:<8} {:<8} {:>12} Jan  1 00:00 {}",
-        if is_dir { "drwxr-xr-x" } else { "-rw-r--r--" },
-        owner,
-        owner,
-        size,
-        name
-    )
+fn longname(name: &str, is_dir: bool, size: u64, owner: &str, mode: u32) -> String {
+    format!("{}    1 {:<8} {:<8} {:>12} Jan  1 00:00 {}", crate::modes::symbolic(mode, is_dir), owner, owner, size, name)
+}
+
+/// What a SETSTAT / FSETSTAT asks to change (times and owners are read and ignored).
+struct SetAttrs {
+    size: Option<u64>,
+    mode: Option<u32>,
+}
+
+fn parse_setattrs(b: &[u8], p: &mut usize) -> Option<SetAttrs> {
+    let flags = get_u32(b, p)?;
+    let mut a = SetAttrs { size: None, mode: None };
+    if flags & ATTR_SIZE != 0 {
+        a.size = Some(get_u64(b, p)?);
+    }
+    if flags & ATTR_UIDGID != 0 {
+        get_u32(b, p)?;
+        get_u32(b, p)?;
+    }
+    if flags & ATTR_PERMISSIONS != 0 {
+        a.mode = Some(get_u32(b, p)? & 0o7777);
+    }
+    if flags & ATTR_ACMODTIME != 0 {
+        get_u32(b, p)?;
+        get_u32(b, p)?;
+    }
+    if flags & ATTR_EXTENDED != 0 {
+        let n = get_u32(b, p)?;
+        for _ in 0..n.min(64) {
+            get_bytes(b, p)?;
+            get_bytes(b, p)?;
+        }
+    }
+    Some(a)
 }
 
 // ── storage routing ──────────────────────────────────────────────────────────
@@ -368,6 +409,11 @@ impl Sftp {
         if ty == FXP_INIT {
             let mut b = alloc::vec![FXP_VERSION];
             put_u32(&mut b, 3);
+            // OpenSSH extensions we answer: an overwriting rename, and fsync of an open file
+            put_str(&mut b, b"posix-rename@openssh.com");
+            put_str(&mut b, b"1");
+            put_str(&mut b, b"fsync@openssh.com");
+            put_str(&mut b, b"1");
             return packet(b);
         }
         let Some(id) = get_u32(pkt, &mut p) else { return status(0, FX_BAD_MESSAGE, "short packet") };
@@ -377,12 +423,13 @@ impl Sftp {
                 let Some(raw) = get_str(pkt, &mut p) else { return bad() };
                 let r = self.resolve(&raw);
                 let shown = format!("/{r}");
+                let d = kind(&r).unwrap_or(true);
                 let mut b = alloc::vec![FXP_NAME];
                 put_u32(&mut b, id);
                 put_u32(&mut b, 1);
                 put_str(&mut b, shown.as_bytes());
                 put_str(&mut b, shown.as_bytes());
-                put_attrs(&mut b, kind(&r).unwrap_or(true), 0);
+                put_attrs(&mut b, d, 0, mode_of(&r, d));
                 packet(b)
             },
             FXP_STAT | FXP_LSTAT => {
@@ -392,7 +439,7 @@ impl Sftp {
                     Some(is_dir) => {
                         let mut b = alloc::vec![FXP_ATTRS];
                         put_u32(&mut b, id);
-                        put_attrs(&mut b, is_dir, if is_dir { 0 } else { size_of(&r) });
+                        put_attrs(&mut b, is_dir, if is_dir { 0 } else { size_of(&r) }, mode_of(&r, is_dir));
                         packet(b)
                     },
                     None => status(id, FX_NO_SUCH_FILE, "no such file"),
@@ -404,18 +451,81 @@ impl Sftp {
                 let mut b = alloc::vec![FXP_ATTRS];
                 put_u32(&mut b, id);
                 match &self.handles[i] {
-                    Some(Handle::File { data, .. }) => put_attrs(&mut b, false, data.len() as u64),
-                    _ => put_attrs(&mut b, true, 0),
+                    Some(Handle::File { data, path, .. }) => put_attrs(&mut b, false, data.len() as u64, mode_of(path, false)),
+                    Some(Handle::Dir { dir, .. }) => put_attrs(&mut b, true, 0, mode_of(dir, true)),
+                    None => put_attrs(&mut b, true, 0, crate::modes::DEFAULT_DIR),
                 }
                 packet(b)
             },
-            FXP_SETSTAT | FXP_FSETSTAT => status(id, FX_OK, "ok"), // no permissions / times to set
+            FXP_SETSTAT => {
+                // chmod (permissions) and truncate / extend (size); owners and times are read and ignored
+                let Some(raw) = get_str(pkt, &mut p) else { return bad() };
+                let Some(a) = parse_setattrs(pkt, &mut p) else { return bad() };
+                let r = self.resolve(&raw);
+                let Some(is_dir) = kind(&r) else { return status(id, FX_NO_SUCH_FILE, "no such file") };
+                if let Some(mode) = a.mode {
+                    if in_home(&r) && !crate::modes::set(&r, mode, is_dir) {
+                        return status(id, FX_FAILURE, "could not keep the permissions");
+                    }
+                }
+                if let (Some(size), false) = (a.size, is_dir) {
+                    if in_home(&r) && !crate::modes::writable(&r) {
+                        return status(id, FX_PERMISSION_DENIED, "read-only (chmod u+w first)");
+                    }
+                    let mut data = match read_file(&r) {
+                        Ok(v) => v,
+                        Err(code) => return status(id, code, "cannot read the file"),
+                    };
+                    if size as usize > MAX_FILE {
+                        return status(id, FX_FAILURE, "file too large for LingOS storage (64 MiB)");
+                    }
+                    data.resize(size as usize, 0);
+                    if let Err(code) = write_file(&r, &data) {
+                        return status(id, code, "could not resize the file");
+                    }
+                }
+                status(id, FX_OK, "ok")
+            },
+            FXP_FSETSTAT => {
+                let Some(h) = get_bytes(pkt, &mut p) else { return bad() };
+                let Some(a) = parse_setattrs(pkt, &mut p) else { return bad() };
+                let Some(i) = self.handle_index(h) else { return status(id, FX_FAILURE, "bad handle") };
+                match &mut self.handles[i] {
+                    Some(Handle::File { path, data, dirty, writable }) => {
+                        if let Some(mode) = a.mode {
+                            if in_home(path) {
+                                crate::modes::set(path, mode, false);
+                            }
+                        }
+                        if let Some(size) = a.size {
+                            if !*writable {
+                                return status(id, FX_PERMISSION_DENIED, "opened read-only");
+                            }
+                            if size as usize > MAX_FILE {
+                                return status(id, FX_FAILURE, "file too large for LingOS storage (64 MiB)");
+                            }
+                            data.resize(size as usize, 0);
+                            *dirty = true;
+                        }
+                        status(id, FX_OK, "ok")
+                    },
+                    Some(Handle::Dir { dir, .. }) => {
+                        if let Some(mode) = a.mode {
+                            if in_home(dir) {
+                                crate::modes::set(dir, mode, true);
+                            }
+                        }
+                        status(id, FX_OK, "ok")
+                    },
+                    None => status(id, FX_FAILURE, "bad handle"),
+                }
+            },
             FXP_OPENDIR => {
                 let Some(raw) = get_str(pkt, &mut p) else { return bad() };
                 let r = self.resolve(&raw);
                 match list(&r) {
                     Some(entries) => {
-                        let h = self.new_handle(Handle::Dir { entries, pos: 0 });
+                        let h = self.new_handle(Handle::Dir { dir: r.clone(), entries, pos: 0 });
                         let mut b = alloc::vec![FXP_HANDLE];
                         put_u32(&mut b, id);
                         put_str(&mut b, &h);
@@ -428,7 +538,7 @@ impl Sftp {
                 let Some(h) = get_bytes(pkt, &mut p) else { return bad() };
                 let Some(i) = self.handle_index(h) else { return status(id, FX_FAILURE, "bad handle") };
                 let owner = self.home.trim_start_matches("home/").to_string();
-                let Some(Handle::Dir { entries, pos }) = &mut self.handles[i] else {
+                let Some(Handle::Dir { dir, entries, pos }) = &mut self.handles[i] else {
                     return status(id, FX_FAILURE, "not a folder");
                 };
                 if *pos >= entries.len() {
@@ -439,9 +549,11 @@ impl Sftp {
                 put_u32(&mut b, id);
                 put_u32(&mut b, (end - *pos) as u32);
                 for (name, is_dir, size) in &entries[*pos..end] {
+                    let full = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
+                    let mode = mode_of(&full, *is_dir);
                     put_str(&mut b, name.as_bytes());
-                    put_str(&mut b, longname(name, *is_dir, *size, &owner).as_bytes());
-                    put_attrs(&mut b, *is_dir, *size);
+                    put_str(&mut b, longname(name, *is_dir, *size, &owner, mode).as_bytes());
+                    put_attrs(&mut b, *is_dir, *size, mode);
                 }
                 *pos = end;
                 packet(b)
@@ -457,6 +569,9 @@ impl Sftp {
                     return status(id, FX_FAILURE, "file exists");
                 }
                 let writable = flags & (PF_WRITE | PF_APPEND) != 0;
+                if writable && exists && in_home(&r) && !crate::modes::writable(&r) {
+                    return status(id, FX_PERMISSION_DENIED, "read-only (chmod u+w first)");
+                }
                 let data = if exists && flags & PF_TRUNC == 0 {
                     match read_file(&r) {
                         Ok(v) => v,
@@ -543,6 +658,9 @@ impl Sftp {
                 if kind(&r) != Some(false) {
                     return status(id, FX_NO_SUCH_FILE, "no such file");
                 }
+                if in_home(&r) && !crate::modes::writable(&r) {
+                    return status(id, FX_PERMISSION_DENIED, "read-only (chmod u+w first)");
+                }
                 match remove(&r) {
                     Ok(()) => status(id, FX_OK, "ok"),
                     Err(code) => status(id, code, "could not remove"),
@@ -556,6 +674,9 @@ impl Sftp {
                 }
                 if list(&r).is_some_and(|l| !l.is_empty()) {
                     return status(id, FX_FAILURE, "folder not empty");
+                }
+                if in_home(&r) && !crate::modes::writable(&r) {
+                    return status(id, FX_PERMISSION_DENIED, "read-only (chmod u+w first)");
                 }
                 match remove(&r) {
                     Ok(()) => status(id, FX_OK, "ok"),
@@ -578,22 +699,78 @@ impl Sftp {
             FXP_RENAME => {
                 let (Some(a), Some(b)) = (get_str(pkt, &mut p), get_str(pkt, &mut p)) else { return bad() };
                 let (from, to) = (self.resolve(&a), self.resolve(&b));
-                if kind(&from) != Some(false) {
-                    return status(id, FX_FAILURE, "only files can be renamed");
-                }
-                if kind(&to).is_some() {
-                    return status(id, FX_FAILURE, "the target exists");
-                }
-                if media::is_media_path(&from) && media::is_media_path(&to) && media::rename(&from, &to) {
-                    return status(id, FX_OK, "ok");
-                }
-                match read_file(&from).and_then(|d| write_file(&to, &d)).and_then(|_| remove(&from)) {
-                    Ok(()) => status(id, FX_OK, "ok"),
-                    Err(code) => status(id, code, "rename failed"),
+                self.rename(id, &from, &to, false)
+            },
+            FXP_EXTENDED => {
+                let Some(name) = get_str(pkt, &mut p) else { return bad() };
+                match name.as_str() {
+                    // `mv` over an existing file: OpenSSH's sftp asks for this when we advertised it
+                    "posix-rename@openssh.com" => {
+                        let (Some(a), Some(b)) = (get_str(pkt, &mut p), get_str(pkt, &mut p)) else { return bad() };
+                        let (from, to) = (self.resolve(&a), self.resolve(&b));
+                        self.rename(id, &from, &to, true)
+                    },
+                    // flush an open file to storage now
+                    "fsync@openssh.com" => {
+                        let Some(h) = get_bytes(pkt, &mut p) else { return bad() };
+                        let Some(i) = self.handle_index(h) else { return status(id, FX_FAILURE, "bad handle") };
+                        if let Some(Handle::File { path, data, dirty, .. }) = &mut self.handles[i] {
+                            if *dirty {
+                                if let Err(code) = write_file(path, data) {
+                                    return status(id, code, "could not store the file");
+                                }
+                                *dirty = false;
+                            }
+                        }
+                        status(id, FX_OK, "ok")
+                    },
+                    _ => status(id, FX_OP_UNSUPPORTED, "not supported"),
                 }
             },
-            FXP_READLINK | FXP_SYMLINK | FXP_EXTENDED => status(id, FX_OP_UNSUPPORTED, "not supported"),
+            FXP_READLINK | FXP_SYMLINK => status(id, FX_OP_UNSUPPORTED, "not supported"),
             _ => status(id, FX_OP_UNSUPPORTED, "not supported"),
+        }
+    }
+
+    /// RENAME / posix-rename: a file or (under home/) a whole folder. The plain request refuses an
+    /// existing target; `overwrite` (posix-rename) replaces an existing file.
+    fn rename(&mut self, id: u32, from: &str, to: &str, overwrite: bool) -> Vec<u8> {
+        let Some(from_dir) = kind(from) else { return status(id, FX_NO_SUCH_FILE, "no such file") };
+        if from.is_empty() || from == to {
+            return status(id, FX_FAILURE, "cannot rename that");
+        }
+        if in_home(from) && !crate::modes::writable(from) {
+            return status(id, FX_PERMISSION_DENIED, "read-only (chmod u+w first)");
+        }
+        match kind(to) {
+            Some(true) => return status(id, FX_FAILURE, "the target is a folder"),
+            Some(false) if !overwrite || from_dir => return status(id, FX_FAILURE, "the target exists"),
+            Some(false) => {
+                if in_home(to) && !crate::modes::writable(to) {
+                    return status(id, FX_PERMISSION_DENIED, "the target is read-only");
+                }
+                if let Err(code) = remove(to) {
+                    return status(id, code, "could not replace the target");
+                }
+            },
+            None => {},
+        }
+        if from_dir {
+            // a folder moves as a unit within the home tree (vfs copies it and deletes the old one)
+            if in_home(from) && in_home(to) && crate::vfs::rename(from, to) {
+                return status(id, FX_OK, "ok");
+            }
+            return status(id, FX_FAILURE, "that folder cannot be moved here");
+        }
+        if media::is_media_path(from) && media::is_media_path(to) && media::rename(from, to) {
+            return status(id, FX_OK, "ok");
+        }
+        if in_home(from) && in_home(to) && crate::vfs::rename(from, to) {
+            return status(id, FX_OK, "ok");
+        }
+        match read_file(from).and_then(|d| write_file(to, &d)).and_then(|_| remove(from)) {
+            Ok(()) => status(id, FX_OK, "ok"),
+            Err(code) => status(id, code, "rename failed"),
         }
     }
 }

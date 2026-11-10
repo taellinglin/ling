@@ -126,6 +126,8 @@ struct Voice {
     delay: u32,
     /// Stereo pan: -1.0 hard left, 0 center, +1.0 hard right.
     pan: f64,
+    /// Samples held at full level before the decay starts (sustained tones).
+    hold: u32,
 }
 
 const SILENT_VOICE: Voice = Voice {
@@ -140,6 +142,7 @@ const SILENT_VOICE: Voice = Voice {
     sine: false,
     delay: 0,
     pan: 0.0,
+    hold: 0,
 };
 
 static mut VOICES: [Voice; MAX_VOICES] = [SILENT_VOICE; MAX_VOICES];
@@ -167,6 +170,9 @@ pub fn output_level_r() -> u32 {
 // only -- see its module doc), surfaced read-only in the Audio settings tab.
 /// The output controller in use, for Settings > Audio.
 pub fn device_name() -> &'static str {
+    if usb_active() {
+        return crate::drivers::usbaudio::name();
+    }
     match unsafe { BACKEND } {
         BACKEND_NONE => "none",
         b if b == BACKEND_AC97 => "AC'97",
@@ -178,9 +184,15 @@ pub fn sample_rate() -> u32 {
     SAMPLE_RATE
 }
 pub fn bit_depth() -> u32 {
+    if usb_active() {
+        return crate::drivers::usbaudio::bits();
+    }
     16
 }
 pub fn buffer_frames() -> u32 {
+    if usb_active() {
+        return SAMPLE_RATE / 1000; // one 1 ms packet's worth (125 µs packets at high speed)
+    }
     match unsafe { BACKEND } {
         BACKEND_HDA => hda::FRAMES_PER_BUFFER as u32,
         _ => ac97::FRAMES_PER_BUFFER as u32,
@@ -188,6 +200,9 @@ pub fn buffer_frames() -> u32 {
 }
 /// Buffers kept queued ahead of the one playing (the latency budget).
 pub fn ring_buffers() -> u32 {
+    if usb_active() {
+        return crate::drivers::usbaudio::target_ms();
+    }
     match unsafe { BACKEND } {
         BACKEND_HDA => hda::QUEUE_DEPTH as u32,
         _ => ac97::QUEUE_DEPTH as u32,
@@ -216,6 +231,30 @@ pub fn test_tone(pan: i32) {
             sine: true,
             delay: 0,
             pan: p,
+            hold: 0,
+        };
+    }
+}
+
+/// A steady sine of `freq_hz` for `ms` (then a 30 ms fade): the `audio tone`
+/// test signal, easy to check for gaps on a recording.
+pub fn tone(freq_hz: u32, ms: u32) {
+    unsafe {
+        let voices = &mut *&raw mut VOICES;
+        let Some(v) = voices.iter_mut().find(|v| !v.active) else { return };
+        *v = Voice {
+            active: true,
+            stream: APP_SETTINGS,
+            phase: 0.0,
+            phase_inc: freq_hz.clamp(20, 20_000) as f64 / SAMPLE_RATE as f64,
+            level: 0.0,
+            attack: 1.0 / (0.004 * SAMPLE_RATE as f64),
+            decay: libm_free_exp_decay(0.03 * SAMPLE_RATE as f64),
+            attacking: true,
+            sine: true,
+            delay: 0,
+            pan: 0.0,
+            hold: (ms.min(60_000) as u64 * SAMPLE_RATE as u64 / 1000) as u32,
         };
     }
 }
@@ -264,6 +303,7 @@ pub fn note(stream: usize, freq_centihz: u32, dur_ms: u32, delay_ms: u32, sine: 
             sine,
             delay: (delay_ms as u64 * SAMPLE_RATE as u64 / 1000) as u32,
             pan: 0.0,
+            hold: 0,
         };
     }
 }
@@ -682,6 +722,8 @@ fn render(buf: &mut [i16]) {
                         v.level = 1.0;
                         v.attacking = false;
                     }
+                } else if v.hold > 0 {
+                    v.hold -= 1;
                 } else {
                     v.level *= v.decay;
                     if v.level < 0.001 {
@@ -739,24 +781,69 @@ fn render(buf: &mut [i16]) {
     }
 }
 
-/// Initialize the hardware; true if an AC'97 or HD Audio device exists.
+/// Initialize the hardware; true if an AC'97 or HD Audio device (or a USB
+/// audio device, see `drivers::usbaudio`) exists.
 pub fn init() -> bool {
     unsafe {
-        if BACKEND != BACKEND_NONE {
-            return true;
+        if BACKEND == BACKEND_NONE {
+            if ac97::init() {
+                BACKEND = BACKEND_AC97;
+            } else if hda::init() {
+                BACKEND = BACKEND_HDA;
+            }
         }
-        if ac97::init() {
-            BACKEND = BACKEND_AC97;
-        } else if hda::init() {
-            BACKEND = BACKEND_HDA;
-        }
-        BACKEND != BACKEND_NONE
+        let usb = crate::drivers::usbaudio::present();
+        let line: &[u8] = match (BACKEND, usb_active()) {
+            (_, true) => b"audio: output = USB audio device
+",
+            (BACKEND_AC97, _) => b"audio: output = AC'97
+",
+            (BACKEND_HDA, _) => b"audio: output = Intel HD Audio
+",
+            _ => b"audio: no output device yet (a USB one can be plugged in)
+",
+        };
+        crate::console_write(line);
+        BACKEND != BACKEND_NONE || usb
     }
 }
 
+// -- Output selection (onboard codec vs. USB audio) ------------------------
+
+/// 0 auto (USB while one is plugged in), 1 onboard codec, 2 USB.
+static mut OUT_PREF: u8 = 0;
+
+/// Is the USB device the one being played through?
+pub fn usb_active() -> bool {
+    crate::drivers::usbaudio::present() && (unsafe { OUT_PREF } != 1 || unsafe { BACKEND } == BACKEND_NONE)
+}
+
+/// usbaudio attached a device; true if it is now the active output.
+pub fn usb_attached() -> bool {
+    usb_active()
+}
+
+/// usbaudio lost its device: the onboard codec takes over at the next pump.
+pub fn usb_detached() {
+    let name = match unsafe { BACKEND } {
+        BACKEND_AC97 => "AC'97",
+        BACKEND_HDA => "Intel HD Audio",
+        _ => "none",
+    };
+    crate::console_write(alloc::format!("audio: output falls back to {name}
+").as_bytes());
+}
+
 /// Keep the DMA ring fed -- call once per WM frame / shell-loop iteration.
-/// Cheap no-op when the ring is already full or no device exists.
+/// Cheap no-op when the ring is already full or no device exists. Only the
+/// active output is fed; an idle HD Audio ring runs into silence and its
+/// watchdog stops it, an idle USB ring drains (the device plays silence).
 pub fn pump() {
+    let usb = usb_active();
+    crate::drivers::usbaudio::pump(&mut render, usb);
+    if usb {
+        return;
+    }
     match unsafe { BACKEND } {
         BACKEND_AC97 => {
             ac97::pump(&mut render);
@@ -766,4 +853,104 @@ pub fn pump() {
         }
         _ => {}
     }
+}
+
+/// `audio` (Terminal / SSH): list the outputs, choose one, test it.
+pub fn command(arg: &str) -> alloc::string::String {
+    use alloc::format;
+    use alloc::string::String;
+    let words: alloc::vec::Vec<&str> = arg.split_whitespace().collect();
+    let mut msg = String::new();
+    match words.as_slice() {
+        [] | ["list"] | ["status"] => {},
+        ["out", which] => {
+            let pref = match *which {
+                "0" | "onboard" | "hda" | "ac97" => 1,
+                "1" | "usb" => 2,
+                "auto" => 0,
+                _ => return String::from("usage: audio out <0|1|auto>
+"),
+            };
+            if pref == 1 && unsafe { BACKEND } == BACKEND_NONE {
+                return String::from("audio: there is no onboard codec
+");
+            }
+            if pref == 2 && !crate::drivers::usbaudio::present() {
+                return String::from("audio: no USB audio device is attached
+");
+            }
+            unsafe { OUT_PREF = pref };
+            msg = format!("audio: output -> {}
+", device_name());
+            crate::console_write(msg.as_bytes());
+        },
+        ["tone", rest @ ..] => {
+            let hz = rest.first().and_then(|s| s.parse().ok()).unwrap_or(1000u32);
+            let ms = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(2000u32);
+            tone(hz, ms);
+            return format!("audio: {hz} Hz tone for {ms} ms on {}
+", device_name());
+        },
+        ["reset"] => {
+            crate::drivers::usbaudio::reset_stats();
+            return String::from("audio: pump statistics reset\n");
+        },
+        ["jingle"] => {
+            jingle(EVENT_BOOT);
+            return format!("audio: boot jingle on {}
+", device_name());
+        },
+        ["latency", ms] => {
+            let Ok(v) = ms.parse::<u32>() else { return String::from("usage: audio latency <12..100 ms>
+") };
+            crate::drivers::usbaudio::set_target_ms(v);
+            return format!("audio: USB queue target {} ms
+", crate::drivers::usbaudio::target_ms());
+        },
+        _ => {
+            return String::from(
+                "usage: audio                 list outputs (* = playing)
+       audio out <0|1|auto>  choose the output
+       audio tone [hz] [ms]  test tone
+       audio jingle          boot jingle
+       audio latency <ms>    USB queue length
+",
+            )
+        },
+    }
+    let usb = crate::drivers::usbaudio::present();
+    let active_usb = usb_active();
+    let onboard = match unsafe { BACKEND } {
+        BACKEND_AC97 => Some("AC'97"),
+        BACKEND_HDA => Some("Intel HD Audio"),
+        _ => None,
+    };
+    let mut t = msg;
+    t.push_str("audio outputs:
+");
+    match onboard {
+        Some(n) => t.push_str(&format!("{} 0  {n}, 48000 Hz 16-bit stereo
+", if active_usb { ' ' } else { '*' })),
+        None => t.push_str("  0  (no onboard codec)
+"),
+    }
+    if usb {
+        t.push_str(&format!("{} 1  {} (USB)
+", if active_usb { '*' } else { ' ' }, crate::drivers::usbaudio::name()));
+    } else {
+        t.push_str("  1  (no USB audio device)
+");
+    }
+    t.push_str(&crate::drivers::usbaudio::status());
+    t.push_str(&format!(
+        "selection: {}; master volume {}%
+",
+        match unsafe { OUT_PREF } {
+            1 => "onboard (audio out 0)",
+            2 => "USB (audio out 1)",
+            _ => "auto -- USB while one is plugged in",
+        },
+        master_volume()
+    ));
+    t
 }

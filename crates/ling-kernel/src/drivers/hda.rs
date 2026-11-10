@@ -6,8 +6,8 @@
 //! same disclosed pull model as `ac97.rs`).
 //!
 //! Bring-up:
-//! 1. PCI class 0x04/0x03; memory BAR0 (64-bit capable -- this kernel
-//!    identity-maps [0, 4GiB), so a BAR above that is refused, not mapped).
+//! 1. PCI class 0x04/0x03; memory BAR0 (64-bit capable -- a
+//!    BAR above 4 GiB is mapped uncached with `paging::map_mmio`).
 //! 2. Controller reset (GCTL.CRST 0 -> 1), codecs self-enumerate into
 //!    STATESTS; the first present codec is used.
 //! 3. Codec commands go through the CORB/RIRB rings (polled); if the rings
@@ -575,8 +575,10 @@ pub fn init() -> bool {
     if (bar0 >> 1) & 3 == 2 {
         base |= (loc.read32(0x14) as u64) << 32;
     }
-    if base == 0 || base >= 0x1_0000_0000 {
-        log_hex("hda: BAR0 not identity-mapped: hi=", (base >> 32) as u32);
+    // UEFI boards often put this BAR above 4 GiB (the Z590's is at
+    // 0x40_1211_0000): map it there, uncached.
+    if base == 0 || crate::arch::paging::map_mmio(base, 0x4000).is_none() {
+        log_hex("hda: BAR0 cannot be mapped: hi=", (base >> 32) as u32);
         serial::write(b"\n");
         return false;
     }

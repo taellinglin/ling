@@ -5,10 +5,12 @@
 //! `bring --browse`. All state kernel-side per the usual `.ling`
 //! no-rebinding constraint.
 //!
-//! Honest limits, stated: plain HTTP only (https URLs are refused with a
-//! message, never silently downgraded -- no TLS stack yet); the engine
+//! Honest limits, stated: https goes through the in-kernel TLS 1.3 client
+//! (`crate::tls` -- encrypted, certificates not yet validated); the engine
 //! renders the documented HTML subset (see bring-browser's README and
-//! roadmap); pages over ~120KiB body are truncated with a marker.
+//! roadmap); pages over ~120KiB body are truncated with a marker. The address
+//! used is whatever the system has -- the saved static IP (lingfs `netstatic`)
+//! or a DHCP lease; this embedder never brings the interface up itself.
 
 use crate::drivers::{font8x8, framebuffer, image, netstack, theme};
 use alloc::vec::Vec;
